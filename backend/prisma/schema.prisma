@@ -7,4 +7,101 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// Add models here, then run `npm run prisma:migrate`.
+enum Role {
+  REQUESTER
+  AGENT
+  ADMIN
+}
+
+enum TicketStatus {
+  NEW
+  ASSIGNED
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+  REOPENED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  role      Role
+  password  String
+  createdAt DateTime @default(now())
+
+  ticketsRaised Ticket[]              @relation("RequesterTickets")
+  assignments   Assignment[]          @relation("AgentAssignments")
+  comments      Comment[]
+  transitions   TicketTransitionLog[]
+}
+
+model Ticket {
+  id          String       @id @default(cuid())
+  category    String
+  priority    Priority
+  description String
+  status      TicketStatus @default(NEW)
+
+  requesterId String
+  requester   User         @relation("RequesterTickets", fields: [requesterId], references: [id])
+
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  firstRespondedAt DateTime?
+  resolvedAt        DateTime?
+
+  assignments Assignment[]
+  comments    Comment[]
+  transitions TicketTransitionLog[]
+
+  @@index([status, createdAt])
+  @@index([requesterId])
+}
+
+model Assignment {
+  id           String    @id @default(cuid())
+  ticketId     String
+  ticket       Ticket    @relation(fields: [ticketId], references: [id])
+  agentId      String
+  agent        User      @relation("AgentAssignments", fields: [agentId], references: [id])
+  assignedAt   DateTime  @default(now())
+  unassignedAt DateTime?
+
+  @@index([ticketId])
+  @@index([agentId])
+}
+
+model Comment {
+  id         String   @id @default(cuid())
+  ticketId   String
+  ticket     Ticket   @relation(fields: [ticketId], references: [id])
+  authorId   String
+  author     User     @relation(fields: [authorId], references: [id])
+  body       String
+  isInternal Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([ticketId])
+}
+
+model TicketTransitionLog {
+  id          String        @id @default(cuid())
+  ticketId    String
+  ticket      Ticket        @relation(fields: [ticketId], references: [id])
+  fromStatus  TicketStatus?
+  toStatus    TicketStatus
+  changedById String
+  changedBy   User          @relation(fields: [changedById], references: [id])
+  changedAt   DateTime      @default(now())
+
+  @@index([ticketId])
+}
