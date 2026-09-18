@@ -45,6 +45,7 @@ model User {
 
 model Ticket {
   id          String       @id @default(cuid())
+  subject     String
   category    String
   priority    Priority
   description String
