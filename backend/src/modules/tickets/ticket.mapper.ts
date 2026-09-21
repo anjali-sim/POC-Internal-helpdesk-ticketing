@@ -1,5 +1,6 @@
 import type { Assignment, Comment, Ticket, TicketTransitionLog, User } from '@prisma/client';
 
+import { elapsedBusinessMinutes } from './ticket.sla';
 import { toWirePriority, toWireStatus } from './ticket.state-machine';
 
 type TicketWithRelations = Ticket & {
@@ -25,6 +26,11 @@ export function toTicketDto(ticket: TicketWithRelations) {
     updatedAt: ticket.updatedAt,
     firstRespondedAt: ticket.firstRespondedAt,
     resolvedAt: ticket.resolvedAt,
+    firstResponseDueAt: ticket.firstResponseDueAt,
+    resolutionDueAt: ticket.resolutionDueAt,
+    // Business minutes actually taken — null while still pending.
+    firstResponseMinutes: elapsedBusinessMinutes(ticket.createdAt, ticket.firstRespondedAt),
+    resolutionMinutes: elapsedBusinessMinutes(ticket.createdAt, ticket.resolvedAt),
   };
 }
 

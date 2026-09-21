@@ -1,6 +1,12 @@
-import { Role, TicketStatus as PrismaTicketStatus, type Prisma } from '@prisma/client';
+import { Prisma, Role, TicketStatus as PrismaTicketStatus } from '@prisma/client';
 
-import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../lib/errors';
+import {
+  ConflictError,
+  ForbiddenError,
+  IllegalTransitionError,
+  NotFoundError,
+  ValidationError,
+} from '../../lib/errors';
 import { prisma } from '../../lib/prisma';
 import {
   toAssignmentDto,
@@ -9,13 +15,23 @@ import {
   toTransitionDto,
 } from './ticket.mapper';
 import type { AssignTicketInput, CreateCommentInput, CreateTicketInput, ListTicketsQuery } from './ticket.schema';
+import { slaDueDates } from './ticket.sla';
 import {
+  TRANSITIONS,
   isLegalTransition,
   toPrismaPriority,
   toPrismaStatus,
   toWireStatus,
   type TicketStatus,
 } from './ticket.state-machine';
+
+/** Statuses that count as "open" for the queue, dashboard and age report. */
+const OPEN_STATUSES = [
+  PrismaTicketStatus.NEW,
+  PrismaTicketStatus.ASSIGNED,
+  PrismaTicketStatus.IN_PROGRESS,
+  PrismaTicketStatus.REOPENED,
+] as const;
 
 export interface AuthUser {
   id: string;
@@ -43,6 +59,9 @@ function visibilityWhere(user: AuthUser): Prisma.TicketWhereInput {
 }
 
 export async function createTicket(requesterId: string, input: CreateTicketInput) {
+  const createdAt = new Date();
+  const { firstResponseDueAt, resolutionDueAt } = slaDueDates(input.priority, createdAt);
+
   const ticket = await prisma.$transaction(async (tx) => {
     const created = await tx.ticket.create({
       data: {
@@ -51,6 +70,9 @@ export async function createTicket(requesterId: string, input: CreateTicketInput
         category: input.category,
         priority: toPrismaPriority(input.priority),
         requesterId,
+        createdAt,
+        firstResponseDueAt,
+        resolutionDueAt,
       },
       include: TICKET_INCLUDE,
     });
@@ -78,6 +100,9 @@ export async function listTickets(user: AuthUser, query: ListTicketsQuery) {
       throw new ForbiddenError('Requesters do not have a queue');
     }
     where.assignments = { some: { agentId: user.id, unassignedAt: null } };
+  }
+  if (query.scope === 'open') {
+    where.status = { in: [...OPEN_STATUSES] };
   }
   if (query.status) {
     where.status = toPrismaStatus(query.status);
@@ -151,7 +176,7 @@ export async function transitionTicketStatus(user: AuthUser, id: string, to: Tic
   const from = toWireStatus(ticket.status);
 
   if (!isLegalTransition(from, to)) {
-    throw new ValidationError(`Cannot transition ticket from "${from}" to "${to}"`);
+    throw new IllegalTransitionError(from, to, TRANSITIONS[from] ?? []);
   }
 
   const toPrisma = toPrismaStatus(to);
@@ -222,6 +247,105 @@ export async function assignTicket(user: AuthUser, id: string, input: AssignTick
   });
 
   return toTicketDto(updated);
+}
+
+const AGE_BUCKETS = ['lt_24h', '1_3d', '3_7d', 'gt_7d'] as const;
+export type AgeBucket = (typeof AGE_BUCKETS)[number];
+
+interface AgeBucketRow {
+  bucket: AgeBucket;
+  count: number;
+  breached: number;
+  oldestCreatedAt: Date;
+}
+
+interface SlaSummaryRow {
+  openTotal: number;
+  unassigned: number;
+  firstResponseBreached: number;
+  resolutionBreached: number;
+}
+
+/**
+ * Open tickets grouped by age, plus SLA breach counts.
+ *
+ * Both are aggregates executed in Postgres — no ticket rows cross the wire and
+ * no age is computed in JS, so the cost stays flat as ticket volume grows. The
+ * scans are served by the (status, createdAt) and (status, resolutionDueAt)
+ * indexes on Ticket.
+ */
+export async function getDashboard(user: AuthUser) {
+  if (user.role === Role.REQUESTER) {
+    throw new ForbiddenError('Requesters do not have a dashboard');
+  }
+
+  // An agent's dashboard covers what an agent can see: unclaimed new tickets
+  // plus their own queue. An admin's covers everything.
+  const scope =
+    user.role === Role.ADMIN
+      ? Prisma.sql`TRUE`
+      : Prisma.sql`(
+          t."status" = 'NEW'::"TicketStatus"
+          OR EXISTS (
+            SELECT 1 FROM "Assignment" a
+            WHERE a."ticketId" = t."id" AND a."agentId" = ${user.id} AND a."unassignedAt" IS NULL
+          )
+        )`;
+
+  const openScope = Prisma.sql`t."status" IN ('NEW', 'ASSIGNED', 'IN_PROGRESS', 'REOPENED') AND ${scope}`;
+
+  const [buckets, summary] = await Promise.all([
+    prisma.$queryRaw<AgeBucketRow[]>`
+      SELECT
+        CASE
+          WHEN t."createdAt" > now() - interval '24 hours' THEN 'lt_24h'
+          WHEN t."createdAt" > now() - interval '72 hours' THEN '1_3d'
+          WHEN t."createdAt" > now() - interval '7 days'   THEN '3_7d'
+          ELSE 'gt_7d'
+        END AS bucket,
+        count(*)::int AS count,
+        count(*) FILTER (
+          WHERE t."resolutionDueAt" IS NOT NULL AND now() > t."resolutionDueAt"
+        )::int AS breached,
+        min(t."createdAt") AS "oldestCreatedAt"
+      FROM "Ticket" t
+      WHERE ${openScope}
+      GROUP BY 1
+    `,
+    prisma.$queryRaw<SlaSummaryRow[]>`
+      SELECT
+        count(*)::int AS "openTotal",
+        count(*) FILTER (WHERE t."status" = 'NEW')::int AS "unassigned",
+        count(*) FILTER (
+          WHERE t."firstRespondedAt" IS NULL
+            AND t."firstResponseDueAt" IS NOT NULL
+            AND now() > t."firstResponseDueAt"
+        )::int AS "firstResponseBreached",
+        count(*) FILTER (
+          WHERE t."resolutionDueAt" IS NOT NULL AND now() > t."resolutionDueAt"
+        )::int AS "resolutionBreached"
+      FROM "Ticket" t
+      WHERE ${openScope}
+    `,
+  ]);
+
+  const byBucket = new Map(buckets.map((row) => [row.bucket, row]));
+
+  return {
+    // Fixed bucket order, with empty buckets present so the UI table is stable.
+    ageBuckets: AGE_BUCKETS.map((bucket) => ({
+      bucket,
+      count: byBucket.get(bucket)?.count ?? 0,
+      breached: byBucket.get(bucket)?.breached ?? 0,
+      oldestCreatedAt: byBucket.get(bucket)?.oldestCreatedAt ?? null,
+    })),
+    sla: summary[0] ?? {
+      openTotal: 0,
+      unassigned: 0,
+      firstResponseBreached: 0,
+      resolutionBreached: 0,
+    },
+  };
 }
 
 export async function addComment(user: AuthUser, id: string, input: CreateCommentInput) {

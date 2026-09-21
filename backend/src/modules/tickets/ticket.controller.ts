@@ -37,6 +37,16 @@ export async function list(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+export async function dashboard(req: Request, res: Response, next: NextFunction) {
+  try {
+    const user = requireUser(req);
+    const result = await ticketService.getDashboard(user);
+    res.status(200).json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function getById(req: Request, res: Response, next: NextFunction) {
   try {
     const user = requireUser(req);

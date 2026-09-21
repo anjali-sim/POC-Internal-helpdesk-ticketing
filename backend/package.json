@@ -13,6 +13,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:generate": "prisma generate",
     "prisma:seed": "tsx prisma/seed.ts",
+    "sla:backfill": "tsx prisma/backfill-sla.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

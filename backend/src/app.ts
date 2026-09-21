@@ -7,6 +7,7 @@ import { logger } from './lib/logger';
 import { errorHandler } from './middleware/errorHandler';
 import { authRouter } from './modules/auth/auth.routes';
 import { ticketRouter } from './modules/tickets/ticket.routes';
+import { userRouter } from './modules/users/user.routes';
 
 const app = express();
 
@@ -21,6 +22,7 @@ app.get('/health', (_req, res) => {
 
 app.use('/api/auth', authRouter);
 app.use('/api/tickets', ticketRouter);
+app.use('/api/users', userRouter);
 
 app.use(errorHandler);
 
