@@ -1,0 +1,13 @@
+// The root tsconfig only includes src/, so these standalone tsx scripts land in
+// the editor's inferred project without `types: ["node"]` — which reports
+// `process` and `console` as undefined. They are not part of the build.
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": ["."]
+}

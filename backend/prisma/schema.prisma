@@ -45,6 +45,7 @@ model User {
 
 model Ticket {
   id          String       @id @default(cuid())
+  subject     String
   category    String
   priority    Priority
   description String
@@ -57,13 +58,19 @@ model Ticket {
   updatedAt   DateTime     @updatedAt
 
   firstRespondedAt DateTime?
-  resolvedAt        DateTime?
+  resolvedAt       DateTime?
+
+  // SLA deadlines, computed from priority + business hours when the ticket is
+  // raised so breach checks stay an indexable timestamp comparison in SQL.
+  firstResponseDueAt DateTime?
+  resolutionDueAt    DateTime?
 
   assignments Assignment[]
   comments    Comment[]
   transitions TicketTransitionLog[]
 
   @@index([status, createdAt])
+  @@index([status, resolutionDueAt])
   @@index([requesterId])
 }
 
