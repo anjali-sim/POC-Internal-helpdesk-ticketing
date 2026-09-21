@@ -1,20 +1,50 @@
 import type { ReactNode } from 'react';
-import { NavLink } from 'react-router-dom';
-import { Inbox, LayoutDashboard, LifeBuoy, ListChecks, Plus } from 'lucide-react';
+import { NavLink, useNavigate } from 'react-router-dom';
+import { Inbox, LayoutDashboard, LifeBuoy, ListChecks, LogOut, Plus } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { Avatar } from '@/components/ui/Avatar';
-import { LinkButton } from '@/components/ui/Button';
-import { AGENTS } from '@/data/seed';
+import { Button, LinkButton } from '@/components/ui/Button';
+import { useAuth } from '@/hooks/useAuth';
+import { isAgentOrAdmin, ROLE_LABEL, type Role } from '@/types/ticket';
 
-const CURRENT_USER = AGENTS[0];
+interface NavItem {
+  to: string;
+  label: string;
+  icon: ReactNode;
+  roles?: Role[];
+}
 
-const NAV_ITEMS = [
-  { to: '/dashboard', label: 'Dashboard', icon: <LayoutDashboard className="size-4" /> },
-  { to: '/queue', label: 'My queue', icon: <Inbox className="size-4" /> },
+const NAV_ITEMS: NavItem[] = [
+  {
+    to: '/dashboard',
+    label: 'Dashboard',
+    icon: <LayoutDashboard className="size-4" />,
+    roles: ['AGENT', 'ADMIN'],
+  },
+  {
+    to: '/queue',
+    label: 'My queue',
+    icon: <Inbox className="size-4" />,
+    roles: ['AGENT', 'ADMIN'],
+  },
   { to: '/tickets', label: 'All tickets', icon: <ListChecks className="size-4" /> },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  // AppShell only renders behind RequireAuth, so a user is always present.
+  if (!user) return null;
+
+  const navItems = NAV_ITEMS.filter((item) => !item.roles || item.roles.includes(user.role));
+  const canRaiseTicket = user.role === 'REQUESTER';
+
+  async function handleLogout() {
+    await logout();
+    navigate('/login', { replace: true });
+  }
+
   return (
     <div className="flex min-h-svh bg-surface-2">
       <aside className="hidden w-60 shrink-0 flex-col border-r border-line bg-surface px-3 py-4 sm:flex">
@@ -25,19 +55,29 @@ export function AppShell({ children }: { children: ReactNode }) {
           <span className="text-sm font-semibold tracking-tight text-fg">Helpdesk</span>
         </div>
 
-        <LinkButton to="/tickets/new" size="sm" className="mb-4" leadingIcon={<Plus className="size-4" />}>
-          New ticket
-        </LinkButton>
+        {canRaiseTicket && (
+          <LinkButton
+            to="/tickets/new"
+            size="sm"
+            className="mb-4"
+            leadingIcon={<Plus className="size-4" />}
+          >
+            New ticket
+          </LinkButton>
+        )}
 
         <nav className="flex flex-col gap-0.5">
-          {NAV_ITEMS.map((item) => (
+          {navItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
+              end={item.to === '/tickets'}
               className={({ isActive }) =>
                 cn(
                   'flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition',
-                  isActive ? 'bg-brand-soft text-brand' : 'text-muted hover:bg-surface-2 hover:text-fg',
+                  isActive
+                    ? 'bg-brand-soft text-brand'
+                    : 'text-muted hover:bg-surface-2 hover:text-fg',
                 )
               }
             >
@@ -49,12 +89,22 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <div className="mt-auto space-y-3 border-t border-line pt-3">
           <div className="flex items-center gap-2.5 px-2">
-            <Avatar name={CURRENT_USER.name} size="sm" />
+            <Avatar name={user.name} size="sm" />
             <div className="min-w-0">
-              <p className="truncate text-sm font-medium text-fg">{CURRENT_USER.name}</p>
-              <p className="truncate text-xs text-muted capitalize">{CURRENT_USER.role}</p>
+              <p className="truncate text-sm font-medium text-fg">{user.name}</p>
+              <p className="truncate text-xs text-muted">{ROLE_LABEL[user.role]}</p>
             </div>
           </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            fullWidth
+            className="justify-start"
+            leadingIcon={<LogOut className="size-4" />}
+            onClick={() => void handleLogout()}
+          >
+            Sign out
+          </Button>
         </div>
       </aside>
 
@@ -66,7 +116,14 @@ export function AppShell({ children }: { children: ReactNode }) {
             </span>
             <span className="text-sm font-semibold text-fg">Helpdesk</span>
           </div>
-          <Avatar name={CURRENT_USER.name} size="sm" />
+          <div className="flex items-center gap-2">
+            {isAgentOrAdmin(user.role) && (
+              <NavLink to="/queue" className="text-xs font-medium text-muted">
+                Queue
+              </NavLink>
+            )}
+            <Avatar name={user.name} size="sm" />
+          </div>
         </header>
 
         <main className="flex-1 px-4 py-6 sm:px-8 sm:py-8">

@@ -1,72 +1,205 @@
 import { useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { ArrowLeft, Clock, Lock, MessageSquare, Send, ShieldAlert, UserRound } from 'lucide-react';
-import { toast } from 'sonner';
 import { Badge } from '@/components/ui/Badge';
 import { Button, LinkButton } from '@/components/ui/Button';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { Select, Textarea } from '@/components/ui/Field';
-import { EmptyState } from '@/components/ui/Feedback';
+import { Alert, EmptyState } from '@/components/ui/Feedback';
+import { LoadingPanel } from '@/components/ui/Spinner';
 import { Avatar } from '@/components/ui/Avatar';
-import { formatAge, formatDateTime, formatDuration, now } from '@/lib/format';
-import { AGENTS, SEED_AUDIT, SEED_COMMENTS, SEED_TICKETS } from '@/data/seed';
+import { useAuth } from '@/hooks/useAuth';
 import {
-  isLegalTransition,
+  useAddComment,
+  useAgents,
+  useAssignTicket,
+  useTicket,
+  useTransitionTicket,
+} from '@/hooks/useTickets';
+import { isApiError } from '@/lib/api-client';
+import { describeError } from '@/lib/error-message';
+import { formatAge, formatBusinessMinutes, formatDateTime, now } from '@/lib/format';
+import {
+  isAgentOrAdmin,
   CATEGORY_LABEL,
   PRIORITY_LABEL,
   PRIORITY_TONE,
-  SLA_TARGET_MINUTES,
   STATUS_LABEL,
   STATUS_TONE,
   TRANSITIONS,
-  type AuditEvent,
+  type Assignment,
   type Comment,
   type Ticket,
   type TicketStatus,
+  type Transition,
 } from '@/types/ticket';
 
-const CURRENT_USER = AGENTS[0];
+type ActivityEntry = {
+  id: string;
+  at: string;
+  icon: 'status' | 'assign' | 'comment';
+  text: string;
+  actor: string;
+};
 
-function nextId(prefix: string) {
-  return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
+// Merges transitions, assignments and comments into one time-ordered feed.
+function buildActivity(
+  transitions: Transition[],
+  assignments: Assignment[],
+  comments: Comment[],
+): ActivityEntry[] {
+  const entries: ActivityEntry[] = [
+    ...transitions.map((t) => ({
+      id: `transition-${t.id}`,
+      at: t.changedAt,
+      icon: 'status' as const,
+      actor: t.changedByName,
+      text: t.fromStatus
+        ? `moved the ticket ${STATUS_LABEL[t.fromStatus]} → ${STATUS_LABEL[t.toStatus]}`
+        : 'raised the ticket',
+    })),
+    ...assignments.map((a, index) => ({
+      id: `assignment-${a.id}`,
+      at: a.assignedAt,
+      icon: 'assign' as const,
+      actor: a.agentName,
+      text: index === 0 ? `was assigned the ticket` : `was assigned the ticket on reassignment`,
+    })),
+    ...comments.map((c) => ({
+      id: `comment-${c.id}`,
+      at: c.createdAt,
+      icon: 'comment' as const,
+      actor: c.authorName,
+      text: c.isInternal ? 'added an internal note' : 'added a reply',
+    })),
+  ];
+
+  return entries.sort((a, b) => +new Date(b.at) - +new Date(a.at));
 }
 
-function slaRow(label: string, actual: string | null, targetMinutes: number, createdAt: string) {
-  const targetMs = targetMinutes * 60_000;
-  const elapsedMs = actual ? new Date(actual).getTime() - new Date(createdAt).getTime() : now() - new Date(createdAt).getTime();
-  const met = actual ? elapsedMs <= targetMs : null;
-  const overdue = !actual && elapsedMs > targetMs;
+// One SLA line: server-measured minutes judged against the server-stored deadline.
+function SlaRow({
+  label,
+  actualMinutes,
+  dueAt,
+  completedAt,
+}: {
+  label: string;
+  actualMinutes: number | null;
+  dueAt: string | null;
+  /** When the milestone happened (responded / resolved), or null if pending. */
+  completedAt: string | null;
+}) {
+  const overdue = completedAt === null && dueAt !== null && new Date(dueAt).getTime() < now();
+  const met =
+    completedAt !== null && dueAt !== null
+      ? new Date(completedAt).getTime() <= new Date(dueAt).getTime()
+      : null;
 
   return (
     <div className="flex items-center justify-between gap-3 text-sm">
       <span className="text-muted">{label}</span>
       <span className="flex items-center gap-2">
         <span className={overdue ? 'font-medium text-danger' : 'text-fg'}>
-          {actual ? formatDuration(elapsedMs) : `${formatDuration(elapsedMs)} elapsed`}
+          {actualMinutes !== null ? formatBusinessMinutes(actualMinutes) : 'Pending'}
         </span>
-        <Badge tone={met === null ? (overdue ? 'danger' : 'neutral') : met ? 'ok' : 'danger'} size="sm">
-          {met === null ? (overdue ? 'Breached' : `Target ${formatDuration(targetMs)}`) : met ? 'Met' : 'Missed'}
-        </Badge>
+        {completedAt !== null ? (
+          <Badge tone={met === false ? 'danger' : 'ok'} size="sm">
+            {met === false ? 'Missed' : 'Met'}
+          </Badge>
+        ) : (
+          <Badge tone={overdue ? 'danger' : 'neutral'} size="sm">
+            {overdue ? 'Breached' : dueAt ? `Due ${formatDateTime(dueAt)}` : 'No target'}
+          </Badge>
+        )}
       </span>
     </div>
   );
 }
 
+function WorkflowCard({ ticket }: { ticket: Ticket }) {
+  const transition = useTransitionTicket(ticket.id);
+  const assign = useAssignTicket(ticket.id);
+  const { data: agents, isPending: agentsPending } = useAgents();
+
+  const legalNext = TRANSITIONS[ticket.status] ?? [];
+  const rejection = isApiError(transition.error) ? transition.error : null;
+
+  return (
+    <Card>
+      <CardHeader
+        title="Workflow"
+        description="Only transitions defined for this state are offered."
+      />
+      <CardBody className="space-y-4">
+        <div>
+          <p className="mb-1.5 text-xs font-medium tracking-wide text-muted uppercase">Assignee</p>
+          <Select
+            value={ticket.assigneeId ?? ''}
+            placeholder={agentsPending ? 'Loading agents…' : 'Unassigned'}
+            disabled={assign.isPending || agentsPending}
+            onChange={(e) => {
+              if (e.target.value) assign.mutate(e.target.value);
+            }}
+            options={(agents ?? []).map((agent) => ({ value: agent.id, label: agent.name }))}
+          />
+          <p className="mt-1.5 text-xs text-subtle">
+            Assigning a new or reopened ticket also moves it to Assigned, server-side.
+          </p>
+        </div>
+
+        <div>
+          <p className="mb-1.5 text-xs font-medium tracking-wide text-muted uppercase">Move to</p>
+          {legalNext.length === 0 ? (
+            <p className="text-sm text-muted">No further transitions from this state.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {legalNext.map((next) => (
+                <Button
+                  key={next}
+                  size="sm"
+                  variant={next === 'reopened' ? 'danger' : 'secondary'}
+                  isLoading={transition.isPending && transition.variables === next}
+                  disabled={transition.isPending}
+                  onClick={() => transition.mutate(next as TicketStatus)}
+                >
+                  {STATUS_LABEL[next]}
+                </Button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {rejection && (
+          <Alert tone="danger" title="Transition rejected by the server">
+            {describeError(rejection)}
+          </Alert>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
 export function TicketDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const [tickets, setTickets] = useState<Ticket[]>(SEED_TICKETS);
-  const [comments, setComments] = useState<Comment[]>(SEED_COMMENTS);
-  const [audit, setAudit] = useState<AuditEvent[]>(SEED_AUDIT);
+  const { user } = useAuth();
+  const { data, isPending, isError, error } = useTicket(id);
+  const addComment = useAddComment(id ?? '');
+
   const [reply, setReply] = useState('');
   const [isInternal, setIsInternal] = useState(false);
 
-  const ticket = tickets.find((t) => t.id === id);
+  const activity = useMemo(
+    () => (data ? buildActivity(data.transitions, data.assignments, data.comments) : []),
+    [data],
+  );
 
-  const visibleComments = useMemo(() => comments.filter((c) => c.ticketId === id), [comments, id]);
-  const ticketAudit = useMemo(() => audit.filter((a) => a.ticketId === id), [audit, id]);
+  if (isPending) return <LoadingPanel label="Loading ticket" />;
 
-  if (!ticket) {
-    return (
+  if (isError) {
+    // Another requester's ticket id gets the same 404 as a nonexistent one.
+    const notFound = isApiError(error) && error.status === 404;
+    return notFound ? (
       <EmptyState
         icon={<ShieldAlert className="size-5" />}
         title="Ticket not found"
@@ -77,100 +210,40 @@ export function TicketDetailPage() {
           </LinkButton>
         }
       />
+    ) : (
+      <Alert tone="danger" title="Could not load this ticket">
+        {describeError(error)}
+      </Alert>
     );
   }
 
-  const legalNext = TRANSITIONS[ticket.status] ?? [];
-  const sla = SLA_TARGET_MINUTES[ticket.priority];
+  const { ticket, comments } = data;
+  const isStaff = isAgentOrAdmin(user?.role);
 
   function submitReply(e: React.FormEvent) {
     e.preventDefault();
-    if (!reply.trim() || !ticket) return;
-    const now = new Date().toISOString();
-    const comment: Comment = {
-      id: nextId('c'),
-      ticketId: ticket.id,
-      authorId: CURRENT_USER.id,
-      authorName: CURRENT_USER.name,
-      authorRole: CURRENT_USER.role,
-      body: reply.trim(),
-      isInternal,
-      createdAt: now,
-    };
-    setComments((prev) => [...prev, comment]);
-    setTickets((prev) => prev.map((t) => (t.id === ticket.id ? { ...t, updatedAt: now } : t)));
-    setAudit((prev) => [
-      {
-        id: nextId('a'),
-        ticketId: ticket.id,
-        type: 'comment_added',
-        fromValue: null,
-        toValue: isInternal ? 'internal note' : 'reply',
-        actorId: CURRENT_USER.id,
-        actorName: CURRENT_USER.name,
-        createdAt: now,
-      },
-      ...prev,
-    ]);
-    setReply('');
-    setIsInternal(false);
-  }
+    const body = reply.trim();
+    if (!body) return;
 
-  function assign(agentId: string) {
-    const agent = AGENTS.find((a) => a.id === agentId);
-    if (!agent || !ticket) return;
-    const now = new Date().toISOString();
-    const previous = ticket.assigneeName;
-    setTickets((prev) =>
-      prev.map((t) =>
-        t.id === ticket.id
-          ? { ...t, assigneeId: agent.id, assigneeName: agent.name, status: t.status === 'new' ? 'assigned' : t.status, updatedAt: now }
-          : t,
-      ),
-    );
-    setAudit((prev) => [
+    addComment.mutate(
+      { body, isInternal: isStaff && isInternal },
       {
-        id: nextId('a'),
-        ticketId: ticket.id,
-        type: previous ? 'reassigned' : 'assigned',
-        fromValue: previous,
-        toValue: agent.name,
-        actorId: CURRENT_USER.id,
-        actorName: CURRENT_USER.name,
-        createdAt: now,
+        onSuccess: () => {
+          setReply('');
+          setIsInternal(false);
+        },
       },
-      ...prev,
-    ]);
-    toast.success(previous ? `Reassigned to ${agent.name}` : `Assigned to ${agent.name}`);
-  }
-
-  function transition(to: TicketStatus) {
-    if (!ticket || !isLegalTransition(ticket.status, to)) return;
-    const now = new Date().toISOString();
-    const from = ticket.status;
-    setTickets((prev) =>
-      prev.map((t) =>
-        t.id === ticket.id
-          ? {
-              ...t,
-              status: to,
-              updatedAt: now,
-              resolvedAt: to === 'resolved' ? now : to === 'reopened' ? null : t.resolvedAt,
-              closedAt: to === 'closed' ? now : to === 'reopened' ? null : t.closedAt,
-            }
-          : t,
-      ),
     );
-    setAudit((prev) => [
-      { id: nextId('a'), ticketId: ticket.id, type: 'status_changed', fromValue: from, toValue: to, actorId: CURRENT_USER.id, actorName: CURRENT_USER.name, createdAt: now },
-      ...prev,
-    ]);
-    toast.success(`Ticket moved to ${to.replace('_', ' ')}`);
   }
 
   return (
     <div className="space-y-6">
-      <LinkButton to="/tickets" variant="ghost" size="sm" leadingIcon={<ArrowLeft className="size-4" />}>
+      <LinkButton
+        to="/tickets"
+        variant="ghost"
+        size="sm"
+        leadingIcon={<ArrowLeft className="size-4" />}
+      >
         Back
       </LinkButton>
 
@@ -181,7 +254,9 @@ export function TicketDetailPage() {
               title={
                 <span className="flex items-center gap-2 text-base">
                   {ticket.subject}
-                  <span className="font-mono text-xs font-normal text-subtle">{ticket.id}</span>
+                  <span className="font-mono text-xs font-normal text-subtle">
+                    {ticket.id.slice(-8)}
+                  </span>
                 </span>
               }
               description={`Opened ${formatDateTime(ticket.createdAt)} by ${ticket.requesterName}`}
@@ -197,10 +272,19 @@ export function TicketDetailPage() {
               }
             />
             <CardBody className="space-y-4">
-              <p className="text-sm leading-relaxed text-fg whitespace-pre-line">{ticket.description}</p>
+              <p className="text-sm leading-relaxed whitespace-pre-line text-fg">
+                {ticket.description}
+              </p>
               <div className="flex flex-wrap gap-2 text-xs text-muted">
-                <span className="rounded-full bg-surface-2 px-2.5 py-1">{CATEGORY_LABEL[ticket.category]}</span>
-                <span className="rounded-full bg-surface-2 px-2.5 py-1">Open {formatAge(ticket.createdAt)}</span>
+                <span className="rounded-full bg-surface-2 px-2.5 py-1">
+                  {CATEGORY_LABEL[ticket.category]}
+                </span>
+                <span className="rounded-full bg-surface-2 px-2.5 py-1">
+                  Open {formatAge(ticket.createdAt)}
+                </span>
+                <span className="rounded-full bg-surface-2 px-2.5 py-1">
+                  {ticket.assigneeName ? `Assigned to ${ticket.assigneeName}` : 'Unassigned'}
+                </span>
               </div>
             </CardBody>
           </Card>
@@ -208,14 +292,18 @@ export function TicketDetailPage() {
           <Card>
             <CardHeader
               title="Comments"
-              description="Internal notes are never shown to the requester."
+              description={
+                isStaff
+                  ? 'Internal notes are never returned to the requester by any endpoint.'
+                  : 'Replies from the support team.'
+              }
             />
             <CardBody className="space-y-4">
-              {visibleComments.length === 0 ? (
+              {comments.length === 0 ? (
                 <p className="py-6 text-center text-sm text-muted">No comments yet.</p>
               ) : (
                 <ul className="space-y-4">
-                  {visibleComments.map((c) => (
+                  {comments.map((c) => (
                     <li
                       key={c.id}
                       className={`flex gap-3 rounded-lg border p-3 ${
@@ -233,7 +321,7 @@ export function TicketDetailPage() {
                             </Badge>
                           )}
                         </div>
-                        <p className="text-sm text-fg whitespace-pre-line">{c.body}</p>
+                        <p className="text-sm whitespace-pre-line text-fg">{c.body}</p>
                       </div>
                     </li>
                   ))}
@@ -242,22 +330,36 @@ export function TicketDetailPage() {
 
               <form onSubmit={submitReply} className="space-y-3 border-t border-line pt-4">
                 <Textarea
-                  placeholder={isInternal ? 'Write an internal note (agents only)' : 'Write a reply the requester will see'}
+                  placeholder={
+                    isInternal
+                      ? 'Write an internal note (agents only)'
+                      : 'Write a reply the requester will see'
+                  }
                   rows={3}
                   value={reply}
                   onChange={(e) => setReply(e.target.value)}
                 />
                 <div className="flex items-center justify-between gap-3">
-                  <label className="flex items-center gap-2 text-sm text-muted">
-                    <input
-                      type="checkbox"
-                      checked={isInternal}
-                      onChange={(e) => setIsInternal(e.target.checked)}
-                      className="size-4 rounded border-line-strong text-brand focus:ring-brand/25"
-                    />
-                    Internal note
-                  </label>
-                  <Button type="submit" size="sm" trailingIcon={<Send className="size-3.5" />} disabled={!reply.trim()}>
+                  {isStaff ? (
+                    <label className="flex items-center gap-2 text-sm text-muted">
+                      <input
+                        type="checkbox"
+                        checked={isInternal}
+                        onChange={(e) => setIsInternal(e.target.checked)}
+                        className="size-4 rounded border-line-strong text-brand focus:ring-brand/25"
+                      />
+                      Internal note
+                    </label>
+                  ) : (
+                    <span />
+                  )}
+                  <Button
+                    type="submit"
+                    size="sm"
+                    trailingIcon={<Send className="size-3.5" />}
+                    isLoading={addComment.isPending}
+                    disabled={!reply.trim()}
+                  >
                     {isInternal ? 'Add note' : 'Reply'}
                   </Button>
                 </div>
@@ -267,48 +369,30 @@ export function TicketDetailPage() {
         </div>
 
         <div className="space-y-6">
-          <Card>
-            <CardHeader title="Workflow" description="Only transitions defined for this state are offered." />
-            <CardBody className="space-y-4">
-              <div>
-                <p className="mb-1.5 text-xs font-medium tracking-wide text-muted uppercase">Assignee</p>
-                <Select
-                  value={ticket.assigneeId ?? ''}
-                  placeholder="Unassigned"
-                  onChange={(e) => assign(e.target.value)}
-                  options={AGENTS.map((a) => ({ value: a.id, label: a.name }))}
-                />
-              </div>
-
-              <div>
-                <p className="mb-1.5 text-xs font-medium tracking-wide text-muted uppercase">Move to</p>
-                {legalNext.length === 0 ? (
-                  <p className="text-sm text-muted">No further transitions from this state.</p>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {legalNext.map((next) => (
-                      <Button
-                        key={next}
-                        size="sm"
-                        variant={next === 'reopened' ? 'danger' : 'secondary'}
-                        onClick={() => transition(next as TicketStatus)}
-                      >
-                        {STATUS_LABEL[next]}
-                      </Button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </CardBody>
-          </Card>
+          {/* Status and assignment are agent/admin only on the server too. */}
+          {isStaff && <WorkflowCard ticket={ticket} />}
 
           <Card>
-            <CardHeader title="Response & resolution" />
+            <CardHeader
+              title="Response & resolution"
+              description="Measured in business hours against the target for this priority."
+            />
             <CardBody className="space-y-3">
-              {slaRow('First response', ticket.firstResponseAt, sla.firstResponse, ticket.createdAt)}
-              {slaRow('Resolution', ticket.resolvedAt, sla.resolution, ticket.createdAt)}
+              <SlaRow
+                label="First response"
+                actualMinutes={ticket.firstResponseMinutes}
+                dueAt={ticket.firstResponseDueAt}
+                completedAt={ticket.firstRespondedAt}
+              />
+              <SlaRow
+                label="Resolution"
+                actualMinutes={ticket.resolutionMinutes}
+                dueAt={ticket.resolutionDueAt}
+                completedAt={ticket.resolvedAt}
+              />
               <p className="pt-1 text-xs text-subtle">
-                Targets apply to elapsed calendar time in this preview; the API tracks business hours separately.
+                Deadlines were computed when the ticket was raised, skipping time outside business
+                hours -- a ticket raised on Friday evening is not late by Monday morning.
               </p>
             </CardBody>
           </Card>
@@ -316,25 +400,26 @@ export function TicketDetailPage() {
           <Card>
             <CardHeader title="Activity" description="Structured trace of every change." />
             <CardBody className="space-y-3">
-              {ticketAudit.length === 0 ? (
+              {activity.length === 0 ? (
                 <p className="text-sm text-muted">No activity yet.</p>
               ) : (
                 <ul className="space-y-3">
-                  {ticketAudit.map((a) => (
-                    <li key={a.id} className="flex gap-2.5 text-sm">
+                  {activity.map((entry) => (
+                    <li key={entry.id} className="flex gap-2.5 text-sm">
                       <span className="mt-0.5 text-subtle">
-                        {a.type === 'comment_added' ? <MessageSquare className="size-3.5" /> : a.type === 'status_changed' ? <Clock className="size-3.5" /> : <UserRound className="size-3.5" />}
+                        {entry.icon === 'comment' ? (
+                          <MessageSquare className="size-3.5" />
+                        ) : entry.icon === 'status' ? (
+                          <Clock className="size-3.5" />
+                        ) : (
+                          <UserRound className="size-3.5" />
+                        )}
                       </span>
                       <div className="min-w-0">
                         <p className="text-fg">
-                          <span className="font-medium">{a.actorName}</span>{' '}
-                          {a.type === 'created' && 'raised the ticket'}
-                          {a.type === 'assigned' && `assigned to ${a.toValue}`}
-                          {a.type === 'reassigned' && `reassigned ${a.fromValue} → ${a.toValue}`}
-                          {a.type === 'status_changed' && `changed status ${a.fromValue} → ${a.toValue}`}
-                          {a.type === 'comment_added' && `added a ${a.toValue}`}
+                          <span className="font-medium">{entry.actor}</span> {entry.text}
                         </p>
-                        <p className="text-xs text-subtle">{formatDateTime(a.createdAt)}</p>
+                        <p className="text-xs text-subtle">{formatDateTime(entry.at)}</p>
                       </div>
                     </li>
                   ))}

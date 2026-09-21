@@ -1,24 +1,135 @@
-export type Role = 'requester' | 'agent' | 'admin';
+import { z } from 'zod';
 
-export interface User {
-  id: string;
-  name: string;
-  email: string;
-  role: Role;
-}
+// Wire contract with the API; apiRequest validates responses against these schemas.
 
-export type TicketStatus = 'new' | 'assigned' | 'in_progress' | 'resolved' | 'closed' | 'reopened';
+export const ROLES = ['REQUESTER', 'AGENT', 'ADMIN'] as const;
+export const CATEGORIES = [
+  'account',
+  'billing',
+  'technical',
+  'access',
+  'hardware',
+  'other',
+] as const;
+export const PRIORITIES = ['low', 'medium', 'high', 'urgent'] as const;
+export const TICKET_STATUSES = [
+  'new',
+  'assigned',
+  'in_progress',
+  'resolved',
+  'closed',
+  'reopened',
+] as const;
 
-export type Priority = 'low' | 'medium' | 'high' | 'urgent';
+export const roleSchema = z.enum(ROLES);
+export const prioritySchema = z.enum(PRIORITIES);
+export const ticketStatusSchema = z.enum(TICKET_STATUSES);
+// Falls back to 'other' so one odd legacy row doesn't fail the whole page parse.
+export const categorySchema = z.enum(CATEGORIES).catch('other');
 
-export type Category = 'account' | 'billing' | 'technical' | 'access' | 'hardware' | 'other';
+export type Role = z.infer<typeof roleSchema>;
+export type Priority = z.infer<typeof prioritySchema>;
+export type TicketStatus = z.infer<typeof ticketStatusSchema>;
+export type Category = z.infer<typeof categorySchema>;
 
-/**
- * The single source of truth for legal moves. Every mutation (mock store here,
- * the real API later) must consult this map instead of branching on state in
- * route handlers -- that's what makes an illegal transition rejectable at one
- * choke point instead of scattered `if`s.
- */
+export const userSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  email: z.string(),
+  role: roleSchema,
+});
+
+export type User = z.infer<typeof userSchema>;
+
+export const ticketSchema = z.object({
+  id: z.string(),
+  subject: z.string(),
+  description: z.string(),
+  category: categorySchema,
+  priority: prioritySchema,
+  status: ticketStatusSchema,
+  requesterId: z.string(),
+  requesterName: z.string(),
+  assigneeId: z.string().nullable(),
+  assigneeName: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  firstRespondedAt: z.string().nullable(),
+  resolvedAt: z.string().nullable(),
+  firstResponseDueAt: z.string().nullable(),
+  resolutionDueAt: z.string().nullable(),
+  // Business minutes actually taken; null while still pending.
+  firstResponseMinutes: z.number().nullable(),
+  resolutionMinutes: z.number().nullable(),
+});
+
+export type Ticket = z.infer<typeof ticketSchema>;
+
+export const commentSchema = z.object({
+  id: z.string(),
+  ticketId: z.string(),
+  authorId: z.string(),
+  authorName: z.string(),
+  authorRole: roleSchema,
+  body: z.string(),
+  isInternal: z.boolean(),
+  createdAt: z.string(),
+});
+
+export type Comment = z.infer<typeof commentSchema>;
+
+export const assignmentSchema = z.object({
+  id: z.string(),
+  agentId: z.string(),
+  agentName: z.string(),
+  assignedAt: z.string(),
+  unassignedAt: z.string().nullable(),
+});
+
+export type Assignment = z.infer<typeof assignmentSchema>;
+
+export const transitionSchema = z.object({
+  id: z.string(),
+  fromStatus: ticketStatusSchema.nullable(),
+  toStatus: ticketStatusSchema,
+  changedById: z.string(),
+  changedByName: z.string(),
+  changedAt: z.string(),
+});
+
+export type Transition = z.infer<typeof transitionSchema>;
+
+export const AGE_BUCKETS = ['lt_24h', '1_3d', '3_7d', 'gt_7d'] as const;
+
+export const ageBucketSchema = z.object({
+  bucket: z.enum(AGE_BUCKETS),
+  count: z.number(),
+  breached: z.number(),
+  oldestCreatedAt: z.string().nullable(),
+});
+
+export type AgeBucket = z.infer<typeof ageBucketSchema>;
+
+export const AGE_BUCKET_LABEL: Record<AgeBucket['bucket'], string> = {
+  lt_24h: 'Under 24h',
+  '1_3d': '1 – 3 days',
+  '3_7d': '3 – 7 days',
+  gt_7d: '7 days+',
+};
+
+export const dashboardSchema = z.object({
+  ageBuckets: z.array(ageBucketSchema),
+  sla: z.object({
+    openTotal: z.number(),
+    unassigned: z.number(),
+    firstResponseBreached: z.number(),
+    resolutionBreached: z.number(),
+  }),
+});
+
+export type Dashboard = z.infer<typeof dashboardSchema>;
+
+// Mirrors the server's transition table; only decides which buttons to render.
 export const TRANSITIONS: Record<TicketStatus, TicketStatus[]> = {
   new: ['assigned'],
   assigned: ['in_progress', 'reopened'],
@@ -27,10 +138,6 @@ export const TRANSITIONS: Record<TicketStatus, TicketStatus[]> = {
   closed: ['reopened'],
   reopened: ['assigned', 'in_progress'],
 };
-
-export function isLegalTransition(from: TicketStatus, to: TicketStatus): boolean {
-  return TRANSITIONS[from]?.includes(to) ?? false;
-}
 
 export const STATUS_LABEL: Record<TicketStatus, string> = {
   new: 'New',
@@ -41,7 +148,10 @@ export const STATUS_LABEL: Record<TicketStatus, string> = {
   reopened: 'Reopened',
 };
 
-export const STATUS_TONE: Record<TicketStatus, 'neutral' | 'brand' | 'ok' | 'warn' | 'danger' | 'info'> = {
+export const STATUS_TONE: Record<
+  TicketStatus,
+  'neutral' | 'brand' | 'ok' | 'warn' | 'danger' | 'info'
+> = {
   new: 'info',
   assigned: 'brand',
   in_progress: 'warn',
@@ -57,7 +167,10 @@ export const PRIORITY_LABEL: Record<Priority, string> = {
   urgent: 'Urgent',
 };
 
-export const PRIORITY_TONE: Record<Priority, 'neutral' | 'brand' | 'ok' | 'warn' | 'danger' | 'info'> = {
+export const PRIORITY_TONE: Record<
+  Priority,
+  'neutral' | 'brand' | 'ok' | 'warn' | 'danger' | 'info'
+> = {
   low: 'neutral',
   medium: 'info',
   high: 'warn',
@@ -73,63 +186,12 @@ export const CATEGORY_LABEL: Record<Category, string> = {
   other: 'Other',
 };
 
-export const SLA_TARGET_MINUTES: Record<Priority, { firstResponse: number; resolution: number }> = {
-  urgent: { firstResponse: 30, resolution: 4 * 60 },
-  high: { firstResponse: 60, resolution: 8 * 60 },
-  medium: { firstResponse: 4 * 60, resolution: 24 * 60 },
-  low: { firstResponse: 8 * 60, resolution: 72 * 60 },
+export const ROLE_LABEL: Record<Role, string> = {
+  REQUESTER: 'Requester',
+  AGENT: 'Agent',
+  ADMIN: 'Admin',
 };
 
-export interface CreateTicketInput {
-  subject: string;
-  description: string;
-  category: Category;
-  priority: Priority;
-}
-
-export interface Ticket {
-  id: string;
-  subject: string;
-  description: string;
-  category: Category;
-  priority: Priority;
-  status: TicketStatus;
-  requesterId: string;
-  requesterName: string;
-  assigneeId: string | null;
-  assigneeName: string | null;
-  createdAt: string;
-  updatedAt: string;
-  firstResponseAt: string | null;
-  resolvedAt: string | null;
-  closedAt: string | null;
-}
-
-export interface Comment {
-  id: string;
-  ticketId: string;
-  authorId: string;
-  authorName: string;
-  authorRole: Role;
-  body: string;
-  isInternal: boolean;
-  createdAt: string;
-}
-
-export type AuditEventType =
-  | 'created'
-  | 'assigned'
-  | 'reassigned'
-  | 'status_changed'
-  | 'comment_added';
-
-export interface AuditEvent {
-  id: string;
-  ticketId: string;
-  type: AuditEventType;
-  fromValue: string | null;
-  toValue: string | null;
-  actorId: string;
-  actorName: string;
-  createdAt: string;
+export function isAgentOrAdmin(role: Role | undefined): boolean {
+  return role === 'AGENT' || role === 'ADMIN';
 }
