@@ -49,7 +49,7 @@ const TICKET_INCLUDE = {
 
 /** Agents see every ticket since all are auto-assigned; requesters see their own. */
 function visibilityWhere(user: AuthUser): Prisma.TicketWhereInput {
-  if (user.role === Role.ADMIN || user.role === Role.AGENT) {
+  if (user.role === Role.AGENT) {
     return {};
   }
   return { requesterId: user.id };
@@ -294,7 +294,7 @@ export async function getDashboard(user: AuthUser) {
     throw new ForbiddenError('Requesters do not have a dashboard');
   }
 
-  // Whole helpdesk for agents and admins alike, matching visibilityWhere.
+  // Whole helpdesk for every agent, matching visibilityWhere.
   const openScope = Prisma.sql`t."status" IN ('NEW', 'ASSIGNED', 'IN_PROGRESS', 'REOPENED')`;
 
   const [buckets, summary] = await Promise.all([

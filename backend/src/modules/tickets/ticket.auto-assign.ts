@@ -17,7 +17,10 @@ export async function pickNextAgentId(tx: Tx): Promise<string | null> {
   return rows[0]?.id ?? null;
 }
 
-/** Actor for system transitions. Sentinel password, not a hash — never logs in. */
+/**
+ * Actor for system transitions. Sentinel password, not a hash — never logs in.
+ * Held as a REQUESTER so the round-robin above never hands it a queue.
+ */
 export const SYSTEM_USER_EMAIL = 'system@helpdesk.test';
 
 let cachedSystemUserId: string | null = null;
@@ -32,7 +35,7 @@ export async function getSystemUserId(tx: Tx): Promise<string> {
     create: {
       email: SYSTEM_USER_EMAIL,
       name: 'Auto-assignment',
-      role: Role.ADMIN,
+      role: Role.REQUESTER,
       password: '!no-login',
     },
     select: { id: true },

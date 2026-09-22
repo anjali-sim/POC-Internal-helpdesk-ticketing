@@ -8,7 +8,6 @@ const prisma = new PrismaClient();
 const SEED_PASSWORD = 'Password123!';
 
 const USERS: Array<{ name: string; email: string; role: Role }> = [
-  { name: 'Ada Admin', email: 'admin@helpdesk.test', role: Role.ADMIN },
   { name: 'Alex Agent', email: 'agent1@helpdesk.test', role: Role.AGENT },
   { name: 'Amara Agent', email: 'agent2@helpdesk.test', role: Role.AGENT },
 ];
@@ -18,14 +17,15 @@ async function main() {
 
   // Actor for transitions the system performs on its own, such as the
   // round-robin assignment made when a ticket is raised. The sentinel is not a
-  // bcrypt hash, so this account can never be logged into.
+  // bcrypt hash, so this account can never be logged into, and it is a
+  // REQUESTER so the round-robin never picks it as an assignee.
   await prisma.user.upsert({
     where: { email: SYSTEM_USER_EMAIL },
     update: {},
     create: {
       email: SYSTEM_USER_EMAIL,
       name: 'Auto-assignment',
-      role: Role.ADMIN,
+      role: Role.REQUESTER,
       password: '!no-login',
     },
   });

@@ -22,7 +22,7 @@ function Protected({ roles, children }: { roles?: Role[]; children: ReactNode })
   );
 }
 
-const AGENT_ROLES: Role[] = ['AGENT', 'ADMIN'];
+const AGENT_ROLES: Role[] = ['AGENT'];
 
 function AppRoutes() {
   return (

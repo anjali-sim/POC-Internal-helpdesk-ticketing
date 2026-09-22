@@ -20,7 +20,7 @@ import { isApiError } from '@/lib/api-client';
 import { describeError } from '@/lib/error-message';
 import { formatAge, formatBusinessMinutes, formatDateTime, now } from '@/lib/format';
 import {
-  isAgentOrAdmin,
+  isAgent,
   CATEGORY_LABEL,
   PRIORITY_LABEL,
   PRIORITY_TONE,
@@ -218,7 +218,7 @@ export function TicketDetailPage() {
   }
 
   const { ticket, comments } = data;
-  const isStaff = isAgentOrAdmin(user?.role);
+  const isStaff = isAgent(user?.role);
 
   function submitReply(e: React.FormEvent) {
     e.preventDefault();
@@ -369,7 +369,7 @@ export function TicketDetailPage() {
         </div>
 
         <div className="space-y-6">
-          {/* Status and assignment are agent/admin only on the server too. */}
+          {/* Status and assignment are agent-only on the server too. */}
           {isStaff && <WorkflowCard ticket={ticket} />}
 
           <Card>
