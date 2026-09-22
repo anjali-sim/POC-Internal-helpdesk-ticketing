@@ -8,5 +8,5 @@ export const userRouter = Router();
 
 userRouter.use(requireAuth);
 
-// Requesters have no reason to enumerate staff, so this stays agent/admin only.
-userRouter.get('/agents', requireRole(Role.AGENT, Role.ADMIN), listAgents);
+// Requesters have no reason to enumerate staff, so this stays agent-only.
+userRouter.get('/agents', requireRole(Role.AGENT), listAgents);

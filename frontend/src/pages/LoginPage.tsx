@@ -16,10 +16,14 @@ const loginSchema = z.object({
 
 type LoginValues = z.infer<typeof loginSchema>;
 
-/** Accounts created by `prisma db seed`, offered as one-click prefill. */
+/**
+ * Accounts created by `prisma db seed`, offered as one-click prefill. Only
+ * agents are seeded -- registering is the way to get a requester, since
+ * /auth/register always creates one.
+ */
 const SEED_ACCOUNTS = [
-  { label: 'Admin', email: 'admin@helpdesk.test', hint: 'Full visibility across every agent' },
-  { label: 'Agent', email: 'agent1@helpdesk.test', hint: 'Work a queue, assign and resolve' },
+  { label: 'Alex (agent)', email: 'agent1@helpdesk.test', hint: 'Work a queue, assign and resolve' },
+  { label: 'Amara (agent)', email: 'agent2@helpdesk.test', hint: 'A second queue to reassign across' },
 ] as const;
 
 const SEED_PASSWORD = 'Password123!';

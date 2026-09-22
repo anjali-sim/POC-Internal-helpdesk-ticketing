@@ -98,7 +98,7 @@ export function RegisterPage() {
           </Button>
 
           <p className="text-center text-xs text-subtle">
-            New accounts are created as requesters. Agent and admin access is granted separately.
+            New accounts are created as requesters. Agent access is granted separately.
           </p>
 
           <p className="text-center text-sm text-muted">

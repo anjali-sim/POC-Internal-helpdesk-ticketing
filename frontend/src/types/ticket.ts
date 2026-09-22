@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 // Wire contract with the API; apiRequest validates responses against these schemas.
 
-export const ROLES = ['REQUESTER', 'AGENT', 'ADMIN'] as const;
+export const ROLES = ['REQUESTER', 'AGENT'] as const;
 export const CATEGORIES = [
   'account',
   'billing',
@@ -189,9 +189,8 @@ export const CATEGORY_LABEL: Record<Category, string> = {
 export const ROLE_LABEL: Record<Role, string> = {
   REQUESTER: 'Requester',
   AGENT: 'Agent',
-  ADMIN: 'Admin',
 };
 
-export function isAgentOrAdmin(role: Role | undefined): boolean {
-  return role === 'AGENT' || role === 'ADMIN';
+export function isAgent(role: Role | undefined): boolean {
+  return role === 'AGENT';
 }

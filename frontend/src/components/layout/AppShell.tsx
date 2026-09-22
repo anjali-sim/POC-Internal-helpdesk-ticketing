@@ -5,7 +5,7 @@ import { cn } from '@/lib/cn';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button, LinkButton } from '@/components/ui/Button';
 import { useAuth } from '@/hooks/useAuth';
-import { isAgentOrAdmin, ROLE_LABEL, type Role } from '@/types/ticket';
+import { isAgent, ROLE_LABEL, type Role } from '@/types/ticket';
 
 interface NavItem {
   to: string;
@@ -19,13 +19,13 @@ const NAV_ITEMS: NavItem[] = [
     to: '/dashboard',
     label: 'Dashboard',
     icon: <LayoutDashboard className="size-4" />,
-    roles: ['AGENT', 'ADMIN'],
+    roles: ['AGENT'],
   },
   {
     to: '/queue',
     label: 'My queue',
     icon: <Inbox className="size-4" />,
-    roles: ['AGENT', 'ADMIN'],
+    roles: ['AGENT'],
   },
   { to: '/tickets', label: 'All tickets', icon: <ListChecks className="size-4" /> },
 ];
@@ -117,7 +117,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <span className="text-sm font-semibold text-fg">Helpdesk</span>
           </div>
           <div className="flex items-center gap-2">
-            {isAgentOrAdmin(user.role) && (
+            {isAgent(user.role) && (
               <NavLink to="/queue" className="text-xs font-medium text-muted">
                 Queue
               </NavLink>

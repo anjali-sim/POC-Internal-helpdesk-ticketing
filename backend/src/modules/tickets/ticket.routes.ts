@@ -19,13 +19,8 @@ ticketRouter.use(requireAuth);
 ticketRouter.post('/', requireRole(Role.REQUESTER), validateBody(createTicketSchema), create);
 ticketRouter.get('/', validateQuery(listTicketsQuerySchema), list);
 // Must be declared before '/:id', otherwise "dashboard" is read as a ticket id.
-ticketRouter.get('/dashboard', requireRole(Role.AGENT, Role.ADMIN), dashboard);
+ticketRouter.get('/dashboard', requireRole(Role.AGENT), dashboard);
 ticketRouter.get('/:id', getById);
-ticketRouter.patch(
-  '/:id/status',
-  requireRole(Role.AGENT, Role.ADMIN),
-  validateBody(transitionTicketSchema),
-  transitionStatus,
-);
-ticketRouter.patch('/:id/assign', requireRole(Role.AGENT, Role.ADMIN), validateBody(assignTicketSchema), assign);
+ticketRouter.patch('/:id/status', requireRole(Role.AGENT), validateBody(transitionTicketSchema), transitionStatus);
+ticketRouter.patch('/:id/assign', requireRole(Role.AGENT), validateBody(assignTicketSchema), assign);
 ticketRouter.post('/:id/comments', validateBody(createCommentSchema), addComment);
