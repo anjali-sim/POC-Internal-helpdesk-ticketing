@@ -24,6 +24,11 @@ export function formatDuration(ms: number): string {
   return `${minutes}m`;
 }
 
+// Separate from formatDuration so call sites are clearly business minutes, not wall-clock.
+export function formatBusinessMinutes(minutes: number): string {
+  return formatDuration(minutes * 60_000);
+}
+
 /** Relative "age" of a timestamp against now, e.g. "2d 4h open". */
 export function formatAge(iso: string): string {
   return formatDuration(now() - new Date(iso).getTime());

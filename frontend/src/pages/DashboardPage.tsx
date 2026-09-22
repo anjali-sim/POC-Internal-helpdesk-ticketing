@@ -1,188 +1,184 @@
-import { useMemo } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, Clock3, Inbox, UserCheck } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardBody, CardHeader, StatTile } from '@/components/ui/Card';
-import { EmptyState } from '@/components/ui/Feedback';
+import { Alert, EmptyState } from '@/components/ui/Feedback';
+import { LoadingPanel } from '@/components/ui/Spinner';
+import { Pagination } from '@/components/ui/Pagination';
 import { TableShell, THead, TH, TBody, TR, TD } from '@/components/ui/Table';
-import { Avatar } from '@/components/ui/Avatar';
-import { SEED_TICKETS } from '@/data/seed';
+import { useDashboard, useTicketList } from '@/hooks/useTickets';
+import { describeError } from '@/lib/error-message';
 import { formatAge, now } from '@/lib/format';
 import {
+  AGE_BUCKET_LABEL,
   PRIORITY_LABEL,
   PRIORITY_TONE,
-  SLA_TARGET_MINUTES,
   STATUS_LABEL,
   STATUS_TONE,
 } from '@/types/ticket';
 
-const AGE_BUCKETS = [
-  { label: '< 4h', maxHours: 4 },
-  { label: '4h – 24h', maxHours: 24 },
-  { label: '1 – 3 days', maxHours: 72 },
-  { label: '3 – 7 days', maxHours: 168 },
-  { label: '7 days+', maxHours: Infinity },
-];
+const PAGE_SIZE = 8;
 
 export function DashboardPage() {
   const navigate = useNavigate();
+  const [page, setPage] = useState(1);
 
-  const open = useMemo(() => SEED_TICKETS.filter((t) => t.status !== 'closed'), []);
+  // Buckets and SLA counts are computed server-side; this just renders the aggregate.
+  const { data, isPending, isError, error } = useDashboard();
 
-  const buckets = useMemo(() => {
-    return AGE_BUCKETS.map((bucket, i) => {
-      const minHours = i === 0 ? 0 : AGE_BUCKETS[i - 1].maxHours;
-      const count = open.filter((t) => {
-        const ageHours = (now() - new Date(t.createdAt).getTime()) / 3_600_000;
-        return ageHours >= minHours && ageHours < bucket.maxHours;
-      }).length;
-      return { ...bucket, count };
-    });
-  }, [open]);
+  // The oldest open tickets, ordered and paged server-side (createdAt asc).
+  const oldestOpen = useTicketList({ scope: 'open', page, pageSize: PAGE_SIZE });
 
-  const maxBucket = Math.max(1, ...buckets.map((b) => b.count));
+  if (isError) {
+    return (
+      <Alert tone="danger" title="Could not load the dashboard">
+        {describeError(error)}
+      </Alert>
+    );
+  }
 
-  const breached = useMemo(() => {
-    return open
-      .filter((t) => !t.firstResponseAt)
-      .map((t) => ({ ticket: t, targetMs: SLA_TARGET_MINUTES[t.priority].firstResponse * 60_000 }))
-      .filter(({ ticket, targetMs }) => now() - new Date(ticket.createdAt).getTime() > targetMs)
-      .sort((a, b) => +new Date(a.ticket.createdAt) - +new Date(b.ticket.createdAt));
-  }, [open]);
+  if (isPending) return <LoadingPanel label="Loading dashboard" />;
 
-  const byAgent = useMemo(() => {
-    const map = new Map<string, { name: string; open: number; urgent: number }>();
-    for (const t of open) {
-      if (!t.assigneeId || !t.assigneeName) continue;
-      const entry = map.get(t.assigneeId) ?? { name: t.assigneeName, open: 0, urgent: 0 };
-      entry.open += 1;
-      if (t.priority === 'urgent') entry.urgent += 1;
-      map.set(t.assigneeId, entry);
-    }
-    return [...map.values()].sort((a, b) => b.open - a.open);
-  }, [open]);
-
-  const unassigned = open.filter((t) => !t.assigneeId).length;
-  const oldestOpen = [...open].sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt))[0];
+  const { ageBuckets, sla } = data;
+  const maxBucket = Math.max(1, ...ageBuckets.map((b) => b.count));
+  const oldestOverall = ageBuckets
+    .map((b) => b.oldestCreatedAt)
+    .filter((value): value is string => Boolean(value))
+    .sort()[0];
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-semibold tracking-tight text-fg">Dashboard</h1>
-        <p className="text-sm text-muted">Open tickets across every agent, aggregated by age and SLA status.</p>
+        <p className="text-sm text-muted">
+          Open tickets aggregated by age and SLA status, computed in the database.
+        </p>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile label="Open tickets" value={open.length} icon={<Inbox className="size-4" />} />
+        <StatTile label="Open tickets" value={sla.openTotal} icon={<Inbox className="size-4" />} />
         <StatTile
           label="Unassigned"
-          value={unassigned}
-          tone={unassigned > 0 ? 'warn' : 'default'}
+          value={sla.unassigned}
+          tone={sla.unassigned > 0 ? 'warn' : 'default'}
           icon={<UserCheck className="size-4" />}
         />
         <StatTile
-          label="SLA breaches"
-          value={breached.length}
-          tone={breached.length > 0 ? 'danger' : 'default'}
+          label="Response breached"
+          value={sla.firstResponseBreached}
+          tone={sla.firstResponseBreached > 0 ? 'danger' : 'default'}
           icon={<AlertTriangle className="size-4" />}
+          hint="Past first-response target, still unanswered"
         />
         <StatTile
-          label="Oldest open"
-          value={oldestOpen ? formatAge(oldestOpen.createdAt) : '—'}
+          label="Resolution breached"
+          value={sla.resolutionBreached}
+          tone={sla.resolutionBreached > 0 ? 'danger' : 'default'}
           icon={<Clock3 className="size-4" />}
+          hint={oldestOverall ? `Oldest open: ${formatAge(oldestOverall)}` : undefined}
         />
-      </div>
-
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
-        <Card className="lg:col-span-2">
-          <CardHeader title="Open tickets by age" description="Aggregate bucket counts, not a per-row scan." />
-          <CardBody className="space-y-3">
-            {buckets.map((b) => (
-              <div key={b.label} className="space-y-1">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted">{b.label}</span>
-                  <span className="font-medium text-fg tabular-nums">{b.count}</span>
-                </div>
-                <div className="h-2 overflow-hidden rounded-full bg-surface-2">
-                  <div
-                    className="h-full rounded-full bg-brand transition-all"
-                    style={{ width: `${(b.count / maxBucket) * 100}%` }}
-                  />
-                </div>
-              </div>
-            ))}
-          </CardBody>
-        </Card>
-
-        <Card className="lg:col-span-3">
-          <CardHeader title="Load by agent" description="Open ticket count currently assigned to each agent." />
-          <CardBody>
-            {byAgent.length === 0 ? (
-              <p className="py-6 text-center text-sm text-muted">No tickets assigned yet.</p>
-            ) : (
-              <ul className="space-y-3">
-                {byAgent.map((a) => (
-                  <li key={a.name} className="flex items-center gap-3">
-                    <Avatar name={a.name} size="sm" />
-                    <span className="min-w-24 text-sm font-medium text-fg">{a.name}</span>
-                    <div className="h-2 flex-1 overflow-hidden rounded-full bg-surface-2">
-                      <div
-                        className="h-full rounded-full bg-info"
-                        style={{ width: `${(a.open / Math.max(1, open.length)) * 100}%` }}
-                      />
-                    </div>
-                    <span className="w-8 text-right text-sm tabular-nums text-fg">{a.open}</span>
-                    {a.urgent > 0 && (
-                      <Badge tone="danger" size="sm">
-                        {a.urgent} urgent
-                      </Badge>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardBody>
-        </Card>
       </div>
 
       <Card>
         <CardHeader
-          title="SLA breaches"
-          description="First-response target missed and still waiting -- computed, not manually flagged."
+          title="Open tickets by age"
+          description="One GROUP BY over the (status, createdAt) index -- no ticket rows leave the database."
         />
-        <CardBody>
-          {breached.length === 0 ? (
-            <EmptyState icon={<AlertTriangle className="size-5" />} title="No breaches right now" description="Every open ticket is within its first-response target." />
+        <CardBody className="space-y-3">
+          {ageBuckets.map((bucket) => (
+            <div key={bucket.bucket} className="space-y-1">
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-muted">{AGE_BUCKET_LABEL[bucket.bucket]}</span>
+                <span className="flex items-center gap-2">
+                  {bucket.breached > 0 && (
+                    <Badge tone="danger" size="sm">
+                      {bucket.breached} breached
+                    </Badge>
+                  )}
+                  <span className="font-medium text-fg tabular-nums">{bucket.count}</span>
+                </span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-surface-2">
+                <div
+                  className="h-full rounded-full bg-brand transition-all"
+                  style={{ width: `${(bucket.count / maxBucket) * 100}%` }}
+                />
+              </div>
+            </div>
+          ))}
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Oldest open tickets"
+          description="Ordered and paged in SQL -- the longest-waiting tickets first."
+        />
+        <CardBody className="space-y-4">
+          {oldestOpen.isError ? (
+            <Alert tone="danger">{describeError(oldestOpen.error)}</Alert>
+          ) : oldestOpen.isPending ? (
+            <LoadingPanel label="Loading tickets" />
+          ) : oldestOpen.data.items.length === 0 ? (
+            <EmptyState
+              icon={<AlertTriangle className="size-5" />}
+              title="Nothing open"
+              description="Every ticket in scope has been resolved or closed."
+            />
           ) : (
-            <TableShell>
-              <THead>
-                <TH>Ticket</TH>
-                <TH>Status</TH>
-                <TH>Priority</TH>
-                <TH>Assignee</TH>
-                <TH>Age</TH>
-              </THead>
-              <TBody>
-                {breached.map(({ ticket: t }) => (
-                  <TR key={t.id} onClick={() => navigate(`/tickets/${t.id}`)}>
-                    <TD className="max-w-72">
-                      <p className="truncate font-medium text-fg">{t.subject}</p>
-                      <p className="text-xs text-subtle">{t.id}</p>
-                    </TD>
-                    <TD>
-                      <Badge tone={STATUS_TONE[t.status]} dot>
-                        {STATUS_LABEL[t.status]}
-                      </Badge>
-                    </TD>
-                    <TD>
-                      <Badge tone={PRIORITY_TONE[t.priority]}>{PRIORITY_LABEL[t.priority]}</Badge>
-                    </TD>
-                    <TD className="text-muted">{t.assigneeName ?? 'Unassigned'}</TD>
-                    <TD className="font-medium text-danger tabular-nums">{formatAge(t.createdAt)}</TD>
-                  </TR>
-                ))}
-              </TBody>
-            </TableShell>
+            <>
+              <TableShell>
+                <THead>
+                  <TH>Ticket</TH>
+                  <TH>Status</TH>
+                  <TH>Priority</TH>
+                  <TH>Assignee</TH>
+                  <TH>Age</TH>
+                </THead>
+                <TBody>
+                  {oldestOpen.data.items.map((t) => {
+                    const breached = Boolean(
+                      t.resolutionDueAt && new Date(t.resolutionDueAt).getTime() < now(),
+                    );
+                    return (
+                      <TR key={t.id} onClick={() => navigate(`/tickets/${t.id}`)}>
+                        <TD className="max-w-72">
+                          <p className="truncate font-medium text-fg">{t.subject}</p>
+                          <p className="font-mono text-xs text-subtle">{t.id.slice(-8)}</p>
+                        </TD>
+                        <TD>
+                          <Badge tone={STATUS_TONE[t.status]} dot>
+                            {STATUS_LABEL[t.status]}
+                          </Badge>
+                        </TD>
+                        <TD>
+                          <Badge tone={PRIORITY_TONE[t.priority]}>
+                            {PRIORITY_LABEL[t.priority]}
+                          </Badge>
+                        </TD>
+                        <TD className="text-muted">{t.assigneeName ?? 'Unassigned'}</TD>
+                        <TD
+                          className={
+                            breached
+                              ? 'font-medium text-danger tabular-nums'
+                              : 'text-muted tabular-nums'
+                          }
+                        >
+                          {formatAge(t.createdAt)}
+                        </TD>
+                      </TR>
+                    );
+                  })}
+                </TBody>
+              </TableShell>
+              <Pagination
+                page={oldestOpen.data.page}
+                pageSize={oldestOpen.data.pageSize}
+                total={oldestOpen.data.total}
+                onPageChange={setPage}
+              />
+            </>
           )}
         </CardBody>
       </Card>
