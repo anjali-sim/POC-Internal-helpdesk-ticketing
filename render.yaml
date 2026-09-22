@@ -53,11 +53,15 @@ services:
     # These two rules replace frontend/nginx.conf. Order matters: the
     # catch-all below would otherwise swallow the API calls.
     routes:
-      # Reverse-proxy the API so the browser only ever sees one origin,
-      # which keeps the sameSite=lax auth cookie working.
+      # Reverse-proxy the API so the browser only ever sees one origin.
+      # The destination must be the API's real .onrender.com host, which Render
+      # suffixes when the bare name is taken -- a stale host here proxies to a
+      # stranger's service and every /api call 404s.
+      # Leave VITE_API_BASE_URL unset on the static site so the SPA uses this
+      # proxy; setting it makes the browser call the API cross-site instead.
       - type: rewrite
         source: /api/*
-        destination: https://helpdesk-backend.onrender.com/api/*
+        destination: https://helpdesk-backend-qckc.onrender.com/api/*
       # SPA fallback: client-side routes like /tickets/42 are not real files.
       - type: rewrite
         source: /*

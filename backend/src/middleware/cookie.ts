@@ -7,10 +7,16 @@ const isProduction = process.env.NODE_ENV === 'production';
 
 const AUTH_COOKIE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
+// In production the SPA may call the API on a different origin (the deployed
+// frontend talks straight to the API host unless it proxies /api itself), and
+// browsers neither store nor send a SameSite=Lax cookie on a cross-site fetch --
+// login would succeed and every later request would come back 401. SameSite=None
+// covers both layouts; it requires Secure, which production has anyway.
+// Locally we stay on Lax: None without Secure is rejected over plain http.
 const baseCookieOptions: CookieOptions = {
   httpOnly: true,
   secure: isProduction,
-  sameSite: 'lax',
+  sameSite: isProduction ? 'none' : 'lax',
   path: '/',
 };
 
