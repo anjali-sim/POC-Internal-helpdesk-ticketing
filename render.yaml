@@ -36,19 +36,17 @@ services:
       - key: NODE_ENV
         value: production
       # Requests are same-origin via the frontend's /api rewrite, so CORS is
-      # only a backstop. Left explicit so `cors()` never falls back to "*",
+      # only a backstop. Set explicitly so `cors()` never falls back to "*",
       # which browsers reject alongside credentials: true.
+      # Render cannot resolve a static site's URL here, so set this by hand in
+      # the dashboard once the frontend exists: https://<frontend>.onrender.com
       - key: CORS_ORIGIN
-        fromService:
-          name: helpdesk-frontend
-          type: web
-          property: url
+        sync: false
 
   # ----------------------------------------------------------------- SPA
   - type: web
     name: helpdesk-frontend
     runtime: static
-    region: oregon
     rootDir: frontend
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
