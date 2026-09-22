@@ -8,13 +8,14 @@ import {
   ValidationError,
 } from '../../lib/errors';
 import { prisma } from '../../lib/prisma';
-import {
-  toAssignmentDto,
-  toCommentDto,
-  toTicketDto,
-  toTransitionDto,
-} from './ticket.mapper';
-import type { AssignTicketInput, CreateCommentInput, CreateTicketInput, ListTicketsQuery } from './ticket.schema';
+import { getSystemUserId, pickNextAgentId } from './ticket.auto-assign';
+import { toAssignmentDto, toCommentDto, toTicketDto, toTransitionDto } from './ticket.mapper';
+import type {
+  AssignTicketInput,
+  CreateCommentInput,
+  CreateTicketInput,
+  ListTicketsQuery,
+} from './ticket.schema';
 import { slaDueDates } from './ticket.sla';
 import {
   TRANSITIONS,
@@ -46,18 +47,15 @@ const TICKET_INCLUDE = {
   },
 } satisfies Prisma.TicketInclude;
 
+/** Agents see every ticket since all are auto-assigned; requesters see their own. */
 function visibilityWhere(user: AuthUser): Prisma.TicketWhereInput {
-  if (user.role === Role.ADMIN) {
+  if (user.role === Role.ADMIN || user.role === Role.AGENT) {
     return {};
-  }
-  if (user.role === Role.AGENT) {
-    return {
-      OR: [{ status: PrismaTicketStatus.NEW }, { assignments: { some: { agentId: user.id } } }],
-    };
   }
   return { requesterId: user.id };
 }
 
+/** Raises a ticket and round-robins it to an agent; stays NEW if there are none. */
 export async function createTicket(requesterId: string, input: CreateTicketInput) {
   const createdAt = new Date();
   const { firstResponseDueAt, resolutionDueAt } = slaDueDates(input.priority, createdAt);
@@ -74,7 +72,6 @@ export async function createTicket(requesterId: string, input: CreateTicketInput
         firstResponseDueAt,
         resolutionDueAt,
       },
-      include: TICKET_INCLUDE,
     });
 
     await tx.ticketTransitionLog.create({
@@ -86,7 +83,25 @@ export async function createTicket(requesterId: string, input: CreateTicketInput
       },
     });
 
-    return created;
+    const agentId = await pickNextAgentId(tx);
+    if (agentId) {
+      await tx.assignment.create({ data: { ticketId: created.id, agentId } });
+      await tx.ticket.update({
+        where: { id: created.id },
+        data: { status: PrismaTicketStatus.ASSIGNED },
+      });
+      // Attributed to the system, not the requester, so the timeline is honest.
+      await tx.ticketTransitionLog.create({
+        data: {
+          ticketId: created.id,
+          fromStatus: PrismaTicketStatus.NEW,
+          toStatus: PrismaTicketStatus.ASSIGNED,
+          changedById: await getSystemUserId(tx),
+        },
+      });
+    }
+
+    return tx.ticket.findUniqueOrThrow({ where: { id: created.id }, include: TICKET_INCLUDE });
   });
 
   return toTicketDto(ticket);
@@ -279,20 +294,8 @@ export async function getDashboard(user: AuthUser) {
     throw new ForbiddenError('Requesters do not have a dashboard');
   }
 
-  // An agent's dashboard covers what an agent can see: unclaimed new tickets
-  // plus their own queue. An admin's covers everything.
-  const scope =
-    user.role === Role.ADMIN
-      ? Prisma.sql`TRUE`
-      : Prisma.sql`(
-          t."status" = 'NEW'::"TicketStatus"
-          OR EXISTS (
-            SELECT 1 FROM "Assignment" a
-            WHERE a."ticketId" = t."id" AND a."agentId" = ${user.id} AND a."unassignedAt" IS NULL
-          )
-        )`;
-
-  const openScope = Prisma.sql`t."status" IN ('NEW', 'ASSIGNED', 'IN_PROGRESS', 'REOPENED') AND ${scope}`;
+  // Whole helpdesk for agents and admins alike, matching visibilityWhere.
+  const openScope = Prisma.sql`t."status" IN ('NEW', 'ASSIGNED', 'IN_PROGRESS', 'REOPENED')`;
 
   const [buckets, summary] = await Promise.all([
     prisma.$queryRaw<AgeBucketRow[]>`
