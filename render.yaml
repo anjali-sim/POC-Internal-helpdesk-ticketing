@@ -1,0 +1,70 @@
+# Render Blueprint — deploys Postgres, the API and the SPA together.
+# Create via Render Dashboard > New > Blueprint, pointed at this repo.
+#
+# After the first deploy, seed the database from your local machine — the
+# production image has no tsx, so the seed cannot run in the Render Shell:
+#   cd backend
+#   DATABASE_URL="<External Database URL from Render>" npm run prisma:seed
+
+databases:
+  - name: helpdesk-db
+    databaseName: helpdesk_poc
+    user: helpdesk
+    plan: free
+    region: oregon
+
+services:
+  # ---------------------------------------------------------------- API
+  - type: web
+    name: helpdesk-backend
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    # The image's CMD runs `prisma migrate deploy` before booting the server.
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: helpdesk-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 1d
+      - key: NODE_ENV
+        value: production
+      # Requests are same-origin via the frontend's /api rewrite, so CORS is
+      # only a backstop. Left explicit so `cors()` never falls back to "*",
+      # which browsers reject alongside credentials: true.
+      - key: CORS_ORIGIN
+        fromService:
+          name: helpdesk-frontend
+          type: web
+          property: url
+
+  # ----------------------------------------------------------------- SPA
+  - type: web
+    name: helpdesk-frontend
+    runtime: static
+    region: oregon
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    # These two rules replace frontend/nginx.conf. Order matters: the
+    # catch-all below would otherwise swallow the API calls.
+    routes:
+      # Reverse-proxy the API so the browser only ever sees one origin,
+      # which keeps the sameSite=lax auth cookie working.
+      - type: rewrite
+        source: /api/*
+        destination: https://helpdesk-backend.onrender.com/api/*
+      # SPA fallback: client-side routes like /tickets/42 are not real files.
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
