@@ -15,6 +15,11 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
 COPY prisma ./prisma
+COPY src ./src
+COPY tsconfig.json ./
 
 EXPOSE 4000
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/server.js"]
+
+# Seeds the two agent accounts via upsert, so it stays a no-op once they
+# already exist — safe to run on every boot, in dev and production alike.
+CMD ["sh", "-c", "npx prisma migrate deploy && npx tsx prisma/seed.ts && node dist/server.js"]
