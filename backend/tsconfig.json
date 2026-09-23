@@ -36,5 +36,8 @@
     "moduleDetection": "force",
     "skipLibCheck": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  // Tests live under src/test and must never reach dist/ — the production image
+  // copies dist/ wholesale. tsconfig.test.json type-checks them separately.
+  "exclude": ["src/test"]
 }
