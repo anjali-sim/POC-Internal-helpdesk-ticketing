@@ -34,3 +34,11 @@ export function requireRole(...roles: Role[]) {
     next();
   };
 }
+
+/** Reads the authenticated user off the request, or throws if requireAuth wasn't applied. */
+export function requireUser(req: Request) {
+  if (!req.user) {
+    throw new UnauthorizedError();
+  }
+  return req.user;
+}
