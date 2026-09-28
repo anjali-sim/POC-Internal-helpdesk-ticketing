@@ -1,8 +1,22 @@
 import { z } from 'zod';
 
-export const CATEGORIES = ['account', 'billing', 'technical', 'access', 'hardware', 'other'] as const;
+export const CATEGORIES = [
+  'account',
+  'billing',
+  'technical',
+  'access',
+  'hardware',
+  'other',
+] as const;
 export const PRIORITIES = ['low', 'medium', 'high', 'urgent'] as const;
-export const TICKET_STATUSES = ['new', 'assigned', 'in_progress', 'resolved', 'closed', 'reopened'] as const;
+export const TICKET_STATUSES = [
+  'new',
+  'assigned',
+  'in_progress',
+  'resolved',
+  'closed',
+  'reopened',
+] as const;
 
 export const createTicketSchema = z.object({
   subject: z.string().trim().min(1, 'Subject is required').max(200),

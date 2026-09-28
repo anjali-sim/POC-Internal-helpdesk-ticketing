@@ -6,7 +6,10 @@ import type { WirePriority } from './ticket.state-machine';
  * One table, consulted wherever a due date is produced — the same reasoning as
  * the transition table in ticket.state-machine.ts.
  */
-export const SLA_TARGET_MINUTES: Record<WirePriority, { firstResponse: number; resolution: number }> = {
+export const SLA_TARGET_MINUTES: Record<
+  WirePriority,
+  { firstResponse: number; resolution: number }
+> = {
   urgent: { firstResponse: 30, resolution: 4 * 60 },
   high: { firstResponse: 60, resolution: 8 * 60 },
   medium: { firstResponse: 4 * 60, resolution: 24 * 60 },
