@@ -39,8 +39,8 @@ export interface ListTicketsParams {
   status?: TicketStatus;
   priority?: Priority;
   category?: Category;
-  /** `queue` = assigned to me right now; `open` = not resolved or closed. */
-  scope?: 'queue' | 'open';
+  /** `open` = not resolved or closed. */
+  scope?: 'open';
   page?: number;
   pageSize?: number;
 }
@@ -48,6 +48,11 @@ export interface ListTicketsParams {
 // Filtering, ordering and paging all happen in Postgres; rows come back oldest-first.
 export function listTickets(params: ListTicketsParams = {}): Promise<TicketList> {
   return apiRequest('/tickets', ticketListSchema, { query: { ...params } });
+}
+
+/** The calling agent's queue: open tickets currently assigned to them. */
+export function listQueue(params: ListTicketsParams = {}): Promise<TicketList> {
+  return apiRequest('/tickets/queue', ticketListSchema, { query: { ...params } });
 }
 
 export function getTicket(id: string): Promise<TicketDetail> {

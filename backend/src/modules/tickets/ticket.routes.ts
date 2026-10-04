@@ -10,6 +10,7 @@ import {
   dashboard,
   getById,
   list,
+  queue,
   transitionStatus,
 } from './ticket.controller';
 import {
@@ -26,7 +27,9 @@ ticketRouter.use(requireAuth);
 
 ticketRouter.post('/', requireRole(Role.REQUESTER), validateBody(createTicketSchema), create);
 ticketRouter.get('/', validateQuery(listTicketsQuerySchema), list);
-// Must be declared before '/:id', otherwise "dashboard" is read as a ticket id.
+// The agent's own queue: tickets currently assigned to the caller.
+ticketRouter.get('/queue', requireRole(Role.AGENT), validateQuery(listTicketsQuerySchema), queue);
+// Must be declared before '/:id', otherwise "queue"/"dashboard" are read as ticket ids.
 ticketRouter.get('/dashboard', requireRole(Role.AGENT), dashboard);
 ticketRouter.get('/:id', getById);
 ticketRouter.patch(

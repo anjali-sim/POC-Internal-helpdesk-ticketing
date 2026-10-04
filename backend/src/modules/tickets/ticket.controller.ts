@@ -21,6 +21,12 @@ export const list = asyncHandler(async (req, res) => {
   res.status(200).json(result);
 });
 
+export const queue = asyncHandler(async (req, res) => {
+  const user = requireUser(req);
+  const result = await ticketService.listQueue(user, req.validatedQuery as ListTicketsQuery);
+  res.status(200).json(result);
+});
+
 export const dashboard = asyncHandler(async (req, res) => {
   const user = requireUser(req);
   const result = await ticketService.getDashboard(user);
