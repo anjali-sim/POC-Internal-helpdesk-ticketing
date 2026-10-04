@@ -7,7 +7,7 @@ import { Alert, EmptyState } from '@/components/ui/Feedback';
 import { LoadingPanel } from '@/components/ui/Spinner';
 import { Pagination } from '@/components/ui/Pagination';
 import { TableShell, THead, TH, TBody, TR, TD } from '@/components/ui/Table';
-import { useTicketList } from '@/hooks/useTickets';
+import { useQueue } from '@/hooks/useTickets';
 import { describeError } from '@/lib/error-message';
 import { formatAge } from '@/lib/format';
 import {
@@ -24,15 +24,14 @@ export function QueuePage() {
   const navigate = useNavigate();
   const [page, setPage] = useState(1);
 
-  // scope=queue is resolved server-side against the open assignment row.
-  const { data, isPending, isError, error } = useTicketList({
-    scope: 'queue',
+  // /tickets/queue is resolved server-side against the open assignment row.
+  const { data, isPending, isError, error } = useQueue({
     page,
     pageSize: PAGE_SIZE,
   });
 
   // Scoped count covering the whole queue, not just the current page.
-  const { data: urgent } = useTicketList({ scope: 'queue', priority: 'urgent', pageSize: 1 });
+  const { data: urgent } = useQueue({ priority: 'urgent', pageSize: 1 });
 
   const tickets = data?.items ?? [];
   // Rows come back oldest-first, so the first row of page 1 is the oldest.

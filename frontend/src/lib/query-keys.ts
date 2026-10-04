@@ -7,6 +7,7 @@ export const queryKeys = {
   tickets: {
     all: ['tickets'] as const,
     list: (params: ListTicketsParams) => ['tickets', 'list', params] as const,
+    queue: (params: ListTicketsParams) => ['tickets', 'queue', params] as const,
     detail: (id: string) => ['tickets', 'detail', id] as const,
     dashboard: () => ['tickets', 'dashboard'] as const,
   },

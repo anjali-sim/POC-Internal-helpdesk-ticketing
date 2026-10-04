@@ -31,7 +31,7 @@ export const listTicketsQuerySchema = z.object({
   status: z.enum(TICKET_STATUSES).optional(),
   priority: z.enum(PRIORITIES).optional(),
   category: z.enum(CATEGORIES).optional(),
-  scope: z.enum(['queue', 'open']).optional(),
+  scope: z.enum(['open']).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
 });

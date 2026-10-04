@@ -250,21 +250,6 @@ describe('GET /api/tickets', () => {
     });
   });
 
-  it('narrows scope=queue to the agent’s own open assignments', async () => {
-    await request(app).get('/api/tickets?scope=queue').set('Cookie', asAgent());
-
-    expect(lastFindManyArgs().where).toMatchObject({
-      assignments: { some: { agentId: alex.id, unassignedAt: null } },
-    });
-  });
-
-  it('forbids scope=queue for a requester', async () => {
-    const res = await request(app).get('/api/tickets?scope=queue').set('Cookie', asRequester());
-
-    expect(res.status).toBe(403);
-    expect(res.body.error.message).toBe('Requesters do not have a queue');
-  });
-
   it('narrows scope=open to the four open statuses', async () => {
     await request(app).get('/api/tickets?scope=open').set('Cookie', asAgent());
 
@@ -294,6 +279,7 @@ describe('GET /api/tickets', () => {
   it.each([
     ['an unknown status', 'status=archived'],
     ['an unknown scope', 'scope=everything'],
+    ['the removed scope=queue', 'scope=queue'],
     ['page 0', 'page=0'],
     ['a non-numeric page', 'page=abc'],
     ['a pageSize over the 100 cap', 'pageSize=500'],
@@ -306,6 +292,73 @@ describe('GET /api/tickets', () => {
 
   it('answers 401 when signed out', async () => {
     expect((await request(app).get('/api/tickets')).status).toBe(401);
+  });
+});
+
+describe('GET /api/tickets/queue', () => {
+  beforeEach(() => {
+    db.ticket.count.mockResolvedValue(1);
+    db.ticket.findMany.mockResolvedValue([ticketWithRelations()]);
+  });
+
+  const lastFindManyArgs = () =>
+    db.ticket.findMany.mock.calls[0]?.[0] as { where: Record<string, unknown> };
+
+  it('is built from the agent’s open assignment, not from the all-tickets view', async () => {
+    const res = await request(app).get('/api/tickets/queue').set('Cookie', asAgent());
+
+    expect(res.status).toBe(200);
+    expect(lastFindManyArgs().where).toMatchObject({
+      assignments: { some: { agentId: alex.id, unassignedAt: null } },
+    });
+  });
+
+  it('defaults to the four open statuses', async () => {
+    await request(app).get('/api/tickets/queue').set('Cookie', asAgent());
+
+    expect(lastFindManyArgs().where.status).toEqual({
+      in: [
+        TicketStatus.NEW,
+        TicketStatus.ASSIGNED,
+        TicketStatus.IN_PROGRESS,
+        TicketStatus.REOPENED,
+      ],
+    });
+  });
+
+  it('lets an explicit status override the open default', async () => {
+    await request(app).get('/api/tickets/queue?status=resolved').set('Cookie', asAgent());
+
+    expect(lastFindManyArgs().where.status).toBe(TicketStatus.RESOLVED);
+  });
+
+  it('applies priority filters and pagination', async () => {
+    await request(app)
+      .get('/api/tickets/queue?priority=urgent&page=2&pageSize=5')
+      .set('Cookie', asAgent());
+
+    expect(lastFindManyArgs()).toMatchObject({
+      where: { priority: Priority.URGENT },
+      skip: 5,
+      take: 5,
+    });
+  });
+
+  it('forbids a requester at the route guard, before any query runs', async () => {
+    const res = await request(app).get('/api/tickets/queue').set('Cookie', asRequester());
+
+    expect(res.status).toBe(403);
+    expect(db.ticket.findMany).not.toHaveBeenCalled();
+  });
+
+  it('answers 401 when signed out', async () => {
+    expect((await request(app).get('/api/tickets/queue')).status).toBe(401);
+  });
+
+  it('is routed as the queue, not as a ticket with id "queue"', async () => {
+    await request(app).get('/api/tickets/queue').set('Cookie', asAgent());
+
+    expect(db.ticket.findFirst).not.toHaveBeenCalled();
   });
 });
 

@@ -15,6 +15,14 @@ export function useTicketList(params: ticketsApi.ListTicketsParams) {
   });
 }
 
+export function useQueue(params: ticketsApi.ListTicketsParams) {
+  return useQuery({
+    queryKey: queryKeys.tickets.queue(params),
+    queryFn: () => ticketsApi.listQueue(params),
+    placeholderData: keepPreviousData,
+  });
+}
+
 export function useTicket(id: string | undefined) {
   return useQuery({
     queryKey: queryKeys.tickets.detail(id ?? ''),

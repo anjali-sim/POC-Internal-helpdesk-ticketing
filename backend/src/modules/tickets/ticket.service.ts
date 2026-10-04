@@ -122,15 +122,8 @@ export async function createTicket(requesterId: string, input: CreateTicketInput
   return toTicketDto(ticket);
 }
 
-export async function listTickets(user: AuthUser, query: ListTicketsQuery) {
-  const where: Prisma.TicketWhereInput = { ...visibilityWhere(user) };
-
-  if (query.scope === 'queue') {
-    if (user.role === Role.REQUESTER) {
-      throw new ForbiddenError('Requesters do not have a queue');
-    }
-    where.assignments = { some: { agentId: user.id, unassignedAt: null } };
-  }
+/** Applies the optional status/priority/category filters shared by every ticket list. */
+function applyListFilters(where: Prisma.TicketWhereInput, query: ListTicketsQuery) {
   if (query.scope === 'open') {
     where.status = { in: [...OPEN_STATUSES] };
   }
@@ -143,7 +136,9 @@ export async function listTickets(user: AuthUser, query: ListTicketsQuery) {
   if (query.category) {
     where.category = query.category;
   }
+}
 
+async function paginateTickets(where: Prisma.TicketWhereInput, query: ListTicketsQuery) {
   const [total, tickets] = await prisma.$transaction([
     prisma.ticket.count({ where }),
     prisma.ticket.findMany({
@@ -161,6 +156,31 @@ export async function listTickets(user: AuthUser, query: ListTicketsQuery) {
     pageSize: query.pageSize,
     total,
   };
+}
+
+export async function listTickets(user: AuthUser, query: ListTicketsQuery) {
+  const where: Prisma.TicketWhereInput = { ...visibilityWhere(user) };
+  applyListFilters(where, query);
+  return paginateTickets(where, query);
+}
+
+/**
+ * The agent's queue: tickets with an open assignment row for this agent. It is
+ * built from the assignment, not from visibilityWhere, so it is never "every
+ * ticket minus the ones that aren't mine". Open statuses unless the caller
+ * names a status explicitly.
+ */
+export async function listQueue(user: AuthUser, query: ListTicketsQuery) {
+  if (user.role !== Role.AGENT) {
+    throw new ForbiddenError('Requesters do not have a queue');
+  }
+
+  const where: Prisma.TicketWhereInput = {
+    assignments: { some: { agentId: user.id, unassignedAt: null } },
+    status: { in: [...OPEN_STATUSES] },
+  };
+  applyListFilters(where, query);
+  return paginateTickets(where, query);
 }
 
 async function findVisibleTicket(user: AuthUser, id: string) {
