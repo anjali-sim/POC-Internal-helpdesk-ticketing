@@ -194,6 +194,11 @@ async function findVisibleTicket(user: AuthUser, id: string) {
   return ticket;
 }
 
+/** The agent holding the open assignment, or null while the ticket is unassigned. */
+function currentAssigneeId(ticket: Awaited<ReturnType<typeof findVisibleTicket>>) {
+  return ticket.assignments.find((a) => a.unassignedAt === null)?.agentId ?? null;
+}
+
 export async function getTicketById(user: AuthUser, id: string) {
   const ticket = await findVisibleTicket(user, id);
 
@@ -223,6 +228,12 @@ export async function getTicketById(user: AuthUser, id: string) {
 
 export async function transitionTicketStatus(user: AuthUser, id: string, to: TicketStatus) {
   const ticket = await findVisibleTicket(user, id);
+
+  // Agents can see every ticket, but only the one it is assigned to may drive its state.
+  if (currentAssigneeId(ticket) !== user.id) {
+    throw new ForbiddenError('Only the agent this ticket is assigned to can change its status');
+  }
+
   const from = toWireStatus(ticket.status);
 
   if (!isLegalTransition(from, to)) {
@@ -262,6 +273,12 @@ export async function transitionTicketStatus(user: AuthUser, id: string, to: Tic
 
 export async function assignTicket(user: AuthUser, id: string, input: AssignTicketInput) {
   const ticket = await findVisibleTicket(user, id);
+
+  // Only the owner can hand a ticket on; an unassigned ticket can be claimed by any agent.
+  const assigneeId = currentAssigneeId(ticket);
+  if (assigneeId !== null && assigneeId !== user.id) {
+    throw new ForbiddenError('Only the agent this ticket is assigned to can reassign it');
+  }
 
   const agent = await prisma.user.findUnique({ where: { id: input.agentId } });
   if (!agent || agent.role !== Role.AGENT) {

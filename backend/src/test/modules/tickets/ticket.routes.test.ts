@@ -432,9 +432,9 @@ describe('GET /api/tickets/:id', () => {
 });
 
 describe('PATCH /api/tickets/:id/status', () => {
-  const armTicket = (status: TicketStatus) =>
+  const armTicket = (status: TicketStatus, assignments = [assignedTo(alex)]) =>
     db.ticket.findFirst.mockResolvedValue(
-      ticketWithRelations(buildTicket({ id: 'ticket_1', status })),
+      ticketWithRelations(buildTicket({ id: 'ticket_1', status }), assignments),
     );
 
   beforeEach(() => {
@@ -571,6 +571,47 @@ describe('PATCH /api/tickets/:id/status', () => {
     expect(db.ticket.updateMany).not.toHaveBeenCalled();
   });
 
+  it('forbids an agent who is not the current assignee', async () => {
+    const bea = buildUser({ id: 'agent_bea', name: 'Bea Agent', role: Role.AGENT });
+    armTicket(TicketStatus.ASSIGNED, [assignedTo(bea)]);
+
+    const res = await request(app)
+      .patch('/api/tickets/ticket_1/status')
+      .set('Cookie', asAgent())
+      .send({ to: 'in_progress' });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('FORBIDDEN');
+    expect(db.ticket.updateMany).not.toHaveBeenCalled();
+    expect(db.ticketTransitionLog.create).not.toHaveBeenCalled();
+  });
+
+  it('forbids a previous assignee once the ticket has been reassigned', async () => {
+    const bea = buildUser({ id: 'agent_bea', name: 'Bea Agent', role: Role.AGENT });
+    armTicket(TicketStatus.ASSIGNED, [
+      assignedTo(alex, { unassignedAt: new Date('2026-01-05T11:00:00.000Z') }),
+      assignedTo(bea),
+    ]);
+
+    const res = await request(app)
+      .patch('/api/tickets/ticket_1/status')
+      .set('Cookie', asAgent())
+      .send({ to: 'in_progress' });
+
+    expect(res.status).toBe(403);
+  });
+
+  it('forbids status changes on a ticket nobody is assigned to', async () => {
+    armTicket(TicketStatus.NEW, []);
+
+    const res = await request(app)
+      .patch('/api/tickets/ticket_1/status')
+      .set('Cookie', asAgent())
+      .send({ to: 'assigned' });
+
+    expect(res.status).toBe(403);
+  });
+
   it('answers 404 for a ticket that does not exist', async () => {
     db.ticket.findFirst.mockResolvedValue(null);
 
@@ -685,6 +726,69 @@ describe('PATCH /api/tickets/:id/assign', () => {
 
     expect(res.status).toBe(400);
     expect(db.ticket.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('lets the current assignee hand the ticket to another agent', async () => {
+    db.ticket.findFirst.mockResolvedValue(
+      ticketWithRelations(buildTicket({ id: 'ticket_1', status: TicketStatus.IN_PROGRESS }), [
+        assignedTo(alex),
+      ]),
+    );
+
+    const res = await request(app)
+      .patch('/api/tickets/ticket_1/assign')
+      .set('Cookie', asAgent())
+      .send({ agentId: bea.id });
+
+    expect(res.status).toBe(200);
+    expect(db.assignment.create).toHaveBeenCalled();
+  });
+
+  it('forbids an agent who is not the current assignee from reassigning', async () => {
+    db.ticket.findFirst.mockResolvedValue(
+      ticketWithRelations(buildTicket({ id: 'ticket_1', status: TicketStatus.IN_PROGRESS }), [
+        assignedTo(bea),
+      ]),
+    );
+
+    const res = await request(app)
+      .patch('/api/tickets/ticket_1/assign')
+      .set('Cookie', asAgent())
+      .send({ agentId: alex.id });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('FORBIDDEN');
+    expect(db.assignment.updateMany).not.toHaveBeenCalled();
+    expect(db.assignment.create).not.toHaveBeenCalled();
+  });
+
+  it('forbids a previous assignee from taking the ticket back', async () => {
+    db.ticket.findFirst.mockResolvedValue(
+      ticketWithRelations(buildTicket({ id: 'ticket_1', status: TicketStatus.IN_PROGRESS }), [
+        assignedTo(alex, { unassignedAt: new Date('2026-01-05T11:00:00.000Z') }),
+        assignedTo(bea),
+      ]),
+    );
+
+    const res = await request(app)
+      .patch('/api/tickets/ticket_1/assign')
+      .set('Cookie', asAgent())
+      .send({ agentId: alex.id });
+
+    expect(res.status).toBe(403);
+  });
+
+  it('lets any agent claim a ticket nobody is assigned to', async () => {
+    db.ticket.findFirst.mockResolvedValue(
+      ticketWithRelations(buildTicket({ id: 'ticket_1', status: TicketStatus.NEW }), []),
+    );
+
+    const res = await request(app)
+      .patch('/api/tickets/ticket_1/assign')
+      .set('Cookie', asAgent())
+      .send({ agentId: alex.id });
+
+    expect(res.status).toBe(200);
   });
 
   it('forbids a requester from assigning', async () => {

@@ -117,10 +117,14 @@ function SlaRow({
   );
 }
 
-function WorkflowCard({ ticket }: { ticket: Ticket }) {
+function WorkflowCard({ ticket, userId }: { ticket: Ticket; userId: string }) {
   const transition = useTransitionTicket(ticket.id);
   const assign = useAssignTicket(ticket.id);
   const { data: agents, isPending: agentsPending } = useAgents();
+
+  // Mirrors the server: the assignee owns the ticket; an unassigned one can be claimed by anyone.
+  const isOwner = ticket.assigneeId === userId;
+  const canAssign = isOwner || ticket.assigneeId === null;
 
   const legalNext = TRANSITIONS[ticket.status] ?? [];
   const rejection = isApiError(transition.error) ? transition.error : null;
@@ -137,20 +141,26 @@ function WorkflowCard({ ticket }: { ticket: Ticket }) {
           <Select
             value={ticket.assigneeId ?? ''}
             placeholder={agentsPending ? 'Loading agents…' : 'Unassigned'}
-            disabled={assign.isPending || agentsPending}
+            disabled={assign.isPending || agentsPending || !canAssign}
             onChange={(e) => {
               if (e.target.value) assign.mutate(e.target.value);
             }}
             options={(agents ?? []).map((agent) => ({ value: agent.id, label: agent.name }))}
           />
           <p className="mt-1.5 text-xs text-subtle">
-            Assigning a new or reopened ticket also moves it to Assigned, server-side.
+            {canAssign
+              ? 'Assigning a new or reopened ticket also moves it to Assigned, server-side.'
+              : `Only ${ticket.assigneeName ?? 'the assignee'} can reassign this ticket.`}
           </p>
         </div>
 
         <div>
           <p className="mb-1.5 text-xs font-medium tracking-wide text-muted uppercase">Move to</p>
-          {legalNext.length === 0 ? (
+          {!isOwner ? (
+            <p className="text-sm text-muted">
+              Only the assigned agent can change this ticket&apos;s status.
+            </p>
+          ) : legalNext.length === 0 ? (
             <p className="text-sm text-muted">No further transitions from this state.</p>
           ) : (
             <div className="flex flex-wrap gap-2">
@@ -370,7 +380,7 @@ export function TicketDetailPage() {
 
         <div className="space-y-6">
           {/* Status and assignment are agent-only on the server too. */}
-          {isStaff && <WorkflowCard ticket={ticket} />}
+          {isStaff && user && <WorkflowCard ticket={ticket} userId={user.id} />}
 
           <Card>
             <CardHeader
