@@ -69,11 +69,20 @@ Full setup, scripts, and test docs: [`backend/README.md`](backend/README.md).
 - **Agents can also see tickets assigned to other agents** (`GET /api/tickets` and
   `GET /api/tickets/:id`). The helpdesk is one shared pool: agents need the full
   picture to cover for each other, spot unassigned work, and see SLA breaches.
-- **Constraint on acting on another agent's ticket: none beyond being an agent.**
-  Any agent may change the status of, reassign, or comment on any ticket. Every
-  status change and assignment is recorded in the audit trail (transition log and
-  assignment history), so the action is attributable. Restricting writes to the
-  current assignee is a possible hardening step but is not implemented.
+- **Constraint on acting on another agent's ticket: ownership.** Agents can *see*
+  every ticket, but only the current assignee can act on it:
+  - **Status changes: current assignee only.** Anyone else gets `403 Forbidden`.
+  - **Reassignment: current assignee only.** An agent hands a ticket on; they
+    cannot take one back. A ticket with **no assignee** (e.g. raised while no
+    agent existed) can be claimed by any agent.
+  - **Comments and internal notes: any agent**, so a colleague can add context
+    to a ticket they do not own.
+
+  Every status change and assignment is recorded in the audit trail (transition
+  log and assignment history), so each action is attributable.
+- **Known limit:** there is no admin role, so a ticket held by an absent agent
+  cannot be rescued by another agent. The spec's optional Admin ("reassign any
+  ticket") is the intended fix and is out of scope for this POC.
 
 ### SLA targets and business hours
 
