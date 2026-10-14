@@ -19,7 +19,7 @@ const NAV_ITEMS: NavItem[] = [
     to: '/dashboard',
     label: 'Dashboard',
     icon: <LayoutDashboard className="size-4" />,
-    roles: ['AGENT'],
+    roles: ['AGENT', 'ADMIN'],
   },
   {
     to: '/queue',

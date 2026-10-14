@@ -66,12 +66,12 @@ function logTransition(
   });
 }
 
-/** Agents see every ticket since all are auto-assigned; requesters see their own. */
+/** Staff (agents and admins) see every ticket; requesters see only their own. */
 function visibilityWhere(user: AuthUser): Prisma.TicketWhereInput {
-  if (user.role === Role.AGENT) {
-    return {};
+  if (user.role === Role.REQUESTER) {
+    return { requesterId: user.id };
   }
-  return { requesterId: user.id };
+  return {};
 }
 
 /** Raises a ticket and round-robins it to an agent; stays NEW if there are none. */
@@ -274,9 +274,11 @@ export async function transitionTicketStatus(user: AuthUser, id: string, to: Tic
 export async function assignTicket(user: AuthUser, id: string, input: AssignTicketInput) {
   const ticket = await findVisibleTicket(user, id);
 
-  // Only the owner can hand a ticket on; an unassigned ticket can be claimed by any agent.
+  // Only the owner can hand a ticket on; an unassigned ticket can be claimed by any
+  // agent. An admin is the exception: they can reassign any ticket (e.g. one held
+  // by an absent agent).
   const assigneeId = currentAssigneeId(ticket);
-  if (assigneeId !== null && assigneeId !== user.id) {
+  if (user.role !== Role.ADMIN && assigneeId !== null && assigneeId !== user.id) {
     throw new ForbiddenError('Only the agent this ticket is assigned to can reassign it');
   }
 

@@ -16,6 +16,7 @@ const nextId = (prefix: string) => `${prefix}_${++seq}`;
 
 export const REQUESTER_ID = 'user_requester';
 export const AGENT_ID = 'user_agent';
+export const ADMIN_ID = 'user_admin';
 
 export function buildUser(overrides: Partial<User> = {}): User {
   return {
@@ -32,6 +33,7 @@ export function buildUser(overrides: Partial<User> = {}): User {
 export const requester = () =>
   buildUser({ id: REQUESTER_ID, name: 'Rita Requester', role: Role.REQUESTER });
 export const agent = () => buildUser({ id: AGENT_ID, name: 'Alex Agent', role: Role.AGENT });
+export const admin = () => buildUser({ id: ADMIN_ID, name: 'Adel Admin', role: Role.ADMIN });
 
 export function buildTicket(overrides: Partial<Ticket> = {}): Ticket {
   const createdAt = overrides.createdAt ?? new Date('2026-01-05T10:00:00.000Z');

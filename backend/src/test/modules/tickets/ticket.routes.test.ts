@@ -7,6 +7,8 @@ vi.mock('../../../lib/prisma', async () => (await import('../../prisma-mock')).p
 import app from '../../../app';
 import { prisma } from '../../../lib/prisma';
 import {
+  ADMIN_ID,
+  admin,
   agent,
   assignedTo,
   authCookie,
@@ -1023,5 +1025,105 @@ describe('GET /api/tickets/dashboard', () => {
     await request(app).get('/api/tickets/dashboard').set('Cookie', asAgent());
 
     expect(db.ticket.findFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe('admin role', () => {
+  const asAdmin = () => authCookie(admin());
+  const bea = buildUser({ id: 'agent_bea', name: 'Bea Agent', role: Role.AGENT });
+
+  beforeEach(() => {
+    db.ticket.findFirst.mockResolvedValue(
+      ticketWithRelations(buildTicket({ id: 'ticket_1', status: TicketStatus.IN_PROGRESS }), [
+        assignedTo(alex),
+      ]),
+    );
+    db.user.findUnique.mockResolvedValue(bea);
+    db.assignment.updateMany.mockResolvedValue({ count: 1 });
+    db.assignment.create.mockResolvedValue({});
+    db.ticket.update.mockResolvedValue({});
+    db.ticketTransitionLog.create.mockResolvedValue({});
+  });
+
+  it('reassigns a ticket held by another agent, which an agent could not', async () => {
+    const res = await request(app)
+      .patch('/api/tickets/ticket_1/assign')
+      .set('Cookie', asAdmin())
+      .send({ agentId: bea.id });
+
+    expect(res.status).toBe(200);
+    expect(db.assignment.updateMany).toHaveBeenCalled();
+    expect(db.assignment.create).toHaveBeenCalledWith({
+      data: { ticketId: 'ticket_1', agentId: bea.id },
+    });
+  });
+
+  it('still only assigns to real agents, never to an admin or requester', async () => {
+    db.user.findUnique.mockResolvedValue(admin());
+
+    const res = await request(app)
+      .patch('/api/tickets/ticket_1/assign')
+      .set('Cookie', asAdmin())
+      .send({ agentId: ADMIN_ID });
+
+    expect(res.status).toBe(400);
+    expect(db.assignment.create).not.toHaveBeenCalled();
+  });
+
+  it('sees the whole helpdesk in the ticket list', async () => {
+    await request(app).get('/api/tickets').set('Cookie', asAdmin());
+
+    const args = db.ticket.findMany.mock.calls[0]?.[0] as { where: Record<string, unknown> };
+    expect(args.where).not.toHaveProperty('requesterId');
+  });
+
+  it('can open any ticket and read its internal notes', async () => {
+    db.comment.findMany.mockResolvedValue([]);
+    db.ticketTransitionLog.findMany.mockResolvedValue([]);
+    const res = await request(app).get('/api/tickets/ticket_1').set('Cookie', asAdmin());
+
+    expect(res.status).toBe(200);
+    const args = db.comment.findMany.mock.calls[0]?.[0] as { where: Record<string, unknown> };
+    expect(args.where).not.toHaveProperty('isInternal');
+  });
+
+  it('can load the dashboard', async () => {
+    const res = await request(app).get('/api/tickets/dashboard').set('Cookie', asAdmin());
+
+    expect(res.status).toBe(200);
+  });
+
+  it('cannot change ticket status — that stays with the assigned agent', async () => {
+    const res = await request(app)
+      .patch('/api/tickets/ticket_1/status')
+      .set('Cookie', asAdmin())
+      .send({ to: 'resolved' });
+
+    expect(res.status).toBe(403);
+    expect(db.ticket.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('cannot raise a ticket', async () => {
+    const res = await request(app).post('/api/tickets').set('Cookie', asAdmin()).send(VALID_TICKET);
+
+    expect(res.status).toBe(403);
+    expect(db.ticket.create).not.toHaveBeenCalled();
+  });
+
+  it('cannot post comments or internal notes', async () => {
+    const res = await request(app)
+      .post('/api/tickets/ticket_1/comments')
+      .set('Cookie', asAdmin())
+      .send({ body: 'hello', isInternal: true });
+
+    expect(res.status).toBe(403);
+    expect(db.comment.create).not.toHaveBeenCalled();
+  });
+
+  it('has no queue of its own', async () => {
+    const res = await request(app).get('/api/tickets/queue').set('Cookie', asAdmin());
+
+    expect(res.status).toBe(403);
+    expect(db.ticket.findMany).not.toHaveBeenCalled();
   });
 });

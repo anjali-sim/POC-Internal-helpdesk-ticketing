@@ -23,6 +23,8 @@ function Protected({ roles, children }: { roles?: Role[]; children: ReactNode })
 }
 
 const AGENT_ROLES: Role[] = ['AGENT'];
+// The dashboard is shared by agents and admins; the queue is agent-only.
+const STAFF_ROLES: Role[] = ['AGENT', 'ADMIN'];
 
 function AppRoutes() {
   return (
@@ -81,7 +83,7 @@ function AppRoutes() {
       <Route
         path="/dashboard"
         element={
-          <Protected roles={AGENT_ROLES}>
+          <Protected roles={STAFF_ROLES}>
             <DashboardPage />
           </Protected>
         }
