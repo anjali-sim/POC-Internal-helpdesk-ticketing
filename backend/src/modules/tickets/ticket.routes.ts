@@ -30,7 +30,7 @@ ticketRouter.get('/', validateQuery(listTicketsQuerySchema), list);
 // The agent's own queue: tickets currently assigned to the caller.
 ticketRouter.get('/queue', requireRole(Role.AGENT), validateQuery(listTicketsQuerySchema), queue);
 // Must be declared before '/:id', otherwise "queue"/"dashboard" are read as ticket ids.
-ticketRouter.get('/dashboard', requireRole(Role.AGENT), dashboard);
+ticketRouter.get('/dashboard', requireRole(Role.AGENT, Role.ADMIN), dashboard);
 ticketRouter.get('/:id', getById);
 ticketRouter.patch(
   '/:id/status',
@@ -40,8 +40,14 @@ ticketRouter.patch(
 );
 ticketRouter.patch(
   '/:id/assign',
-  requireRole(Role.AGENT),
+  requireRole(Role.AGENT, Role.ADMIN),
   validateBody(assignTicketSchema),
   assign,
 );
-ticketRouter.post('/:id/comments', validateBody(createCommentSchema), addComment);
+// Admins oversee and reassign; they do not take part in the comment thread.
+ticketRouter.post(
+  '/:id/comments',
+  requireRole(Role.REQUESTER, Role.AGENT),
+  validateBody(createCommentSchema),
+  addComment,
+);

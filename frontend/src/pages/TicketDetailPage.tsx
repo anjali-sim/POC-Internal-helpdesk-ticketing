@@ -20,6 +20,7 @@ import { isApiError } from '@/lib/api-client';
 import { describeError } from '@/lib/error-message';
 import { formatAge, formatBusinessMinutes, formatDateTime, now } from '@/lib/format';
 import {
+  isAdmin,
   isAgent,
   CATEGORY_LABEL,
   PRIORITY_LABEL,
@@ -117,14 +118,23 @@ function SlaRow({
   );
 }
 
-function WorkflowCard({ ticket, userId }: { ticket: Ticket; userId: string }) {
+function WorkflowCard({
+  ticket,
+  userId,
+  isAdminUser,
+}: {
+  ticket: Ticket;
+  userId: string;
+  isAdminUser: boolean;
+}) {
   const transition = useTransitionTicket(ticket.id);
   const assign = useAssignTicket(ticket.id);
   const { data: agents, isPending: agentsPending } = useAgents();
 
-  // Mirrors the server: the assignee owns the ticket; an unassigned one can be claimed by anyone.
+  // Mirrors the server: the assignee owns the ticket; an unassigned one can be claimed by
+  // any agent; an admin can reassign any ticket but never drives its status.
   const isOwner = ticket.assigneeId === userId;
-  const canAssign = isOwner || ticket.assigneeId === null;
+  const canAssign = isAdminUser || isOwner || ticket.assigneeId === null;
 
   const legalNext = TRANSITIONS[ticket.status] ?? [];
   const rejection = isApiError(transition.error) ? transition.error : null;
@@ -229,6 +239,7 @@ export function TicketDetailPage() {
 
   const { ticket, comments } = data;
   const isStaff = isAgent(user?.role);
+  const isAdminUser = isAdmin(user?.role);
 
   function submitReply(e: React.FormEvent) {
     e.preventDefault();
@@ -303,7 +314,7 @@ export function TicketDetailPage() {
             <CardHeader
               title="Comments"
               description={
-                isStaff
+                isStaff || isAdminUser
                   ? 'Internal notes are never returned to the requester by any endpoint.'
                   : 'Replies from the support team.'
               }
@@ -338,49 +349,57 @@ export function TicketDetailPage() {
                 </ul>
               )}
 
-              <form onSubmit={submitReply} className="space-y-3 border-t border-line pt-4">
-                <Textarea
-                  placeholder={
-                    isInternal
-                      ? 'Write an internal note (agents only)'
-                      : 'Write a reply the requester will see'
-                  }
-                  rows={3}
-                  value={reply}
-                  onChange={(e) => setReply(e.target.value)}
-                />
-                <div className="flex items-center justify-between gap-3">
-                  {isStaff ? (
-                    <label className="flex items-center gap-2 text-sm text-muted">
-                      <input
-                        type="checkbox"
-                        checked={isInternal}
-                        onChange={(e) => setIsInternal(e.target.checked)}
-                        className="size-4 rounded border-line-strong text-brand focus:ring-brand/25"
-                      />
-                      Internal note
-                    </label>
-                  ) : (
-                    <span />
-                  )}
-                  <Button
-                    type="submit"
-                    size="sm"
-                    trailingIcon={<Send className="size-3.5" />}
-                    isLoading={addComment.isPending}
-                    disabled={!reply.trim()}
-                  >
-                    {isInternal ? 'Add note' : 'Reply'}
-                  </Button>
-                </div>
-              </form>
+              {isAdminUser ? (
+                <p className="border-t border-line pt-4 text-sm text-muted">
+                  Admins can read the thread but not post to it.
+                </p>
+              ) : (
+                <form onSubmit={submitReply} className="space-y-3 border-t border-line pt-4">
+                  <Textarea
+                    placeholder={
+                      isInternal
+                        ? 'Write an internal note (agents only)'
+                        : 'Write a reply the requester will see'
+                    }
+                    rows={3}
+                    value={reply}
+                    onChange={(e) => setReply(e.target.value)}
+                  />
+                  <div className="flex items-center justify-between gap-3">
+                    {isStaff ? (
+                      <label className="flex items-center gap-2 text-sm text-muted">
+                        <input
+                          type="checkbox"
+                          checked={isInternal}
+                          onChange={(e) => setIsInternal(e.target.checked)}
+                          className="size-4 rounded border-line-strong text-brand focus:ring-brand/25"
+                        />
+                        Internal note
+                      </label>
+                    ) : (
+                      <span />
+                    )}
+                    <Button
+                      type="submit"
+                      size="sm"
+                      trailingIcon={<Send className="size-3.5" />}
+                      isLoading={addComment.isPending}
+                      disabled={!reply.trim()}
+                    >
+                      {isInternal ? 'Add note' : 'Reply'}
+                    </Button>
+                  </div>
+                </form>
+              )}
             </CardBody>
           </Card>
         </div>
 
         <div className="space-y-6">
           {/* Status and assignment are agent-only on the server too. */}
-          {isStaff && user && <WorkflowCard ticket={ticket} userId={user.id} />}
+          {(isStaff || isAdminUser) && user && (
+            <WorkflowCard ticket={ticket} userId={user.id} isAdminUser={isAdminUser} />
+          )}
 
           <Card>
             <CardHeader

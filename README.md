@@ -80,9 +80,14 @@ Full setup, scripts, and test docs: [`backend/README.md`](backend/README.md).
 
   Every status change and assignment is recorded in the audit trail (transition
   log and assignment history), so each action is attributable.
-- **Known limit:** there is no admin role, so a ticket held by an absent agent
-  cannot be rescued by another agent. The spec's optional Admin ("reassign any
-  ticket") is the intended fix and is out of scope for this POC.
+- **Admin (optional role).** Provisioned by the seed script (`admin@helpdesk.test`),
+  never through public registration, which only creates requesters. An admin is
+  an overseer, not a second agent:
+  - **Can:** see every ticket (including internal notes), load the dashboard, and
+    **reassign any ticket** regardless of who holds it, which is how a ticket
+    stuck with an absent agent is rescued. They can only assign *to* agents.
+  - **Cannot:** raise tickets, change ticket status, post comments or notes, or
+    have a queue. These stay with requesters and agents (`403`).
 
 ### SLA targets and business hours
 

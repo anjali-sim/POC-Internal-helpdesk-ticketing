@@ -6,7 +6,7 @@ vi.mock('../../../lib/prisma', async () => (await import('../../prisma-mock')).p
 
 import app from '../../../app';
 import { prisma } from '../../../lib/prisma';
-import { agent, authCookie, requester } from '../../factories';
+import { admin, agent, authCookie, requester } from '../../factories';
 import { resetPrismaMock, type PrismaMock } from '../../prisma-mock';
 
 const db = prisma as unknown as PrismaMock;
@@ -47,6 +47,15 @@ describe('GET /api/users/agents', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.agents).toEqual([]);
+  });
+
+  it('returns the agent list to an admin, who needs it to reassign', async () => {
+    db.user.findMany.mockResolvedValue(agents);
+
+    const res = await request(app).get('/api/users/agents').set('Cookie', authCookie(admin()));
+
+    expect(res.status).toBe(200);
+    expect(res.body.agents).toEqual(agents);
   });
 
   it('forbids requesters from enumerating staff', async () => {
