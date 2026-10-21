@@ -2,6 +2,7 @@ import { Role } from '@prisma/client';
 import { Router } from 'express';
 
 import { requireAuth, requireRole } from '../../middleware/auth';
+import { commentLimiter, ticketCreateLimiter, writeLimiter } from '../../middleware/rate-limit';
 import { validateBody, validateQuery } from '../../middleware/validate';
 import {
   addComment,
@@ -25,7 +26,13 @@ export const ticketRouter = Router();
 
 ticketRouter.use(requireAuth);
 
-ticketRouter.post('/', requireRole(Role.REQUESTER), validateBody(createTicketSchema), create);
+ticketRouter.post(
+  '/',
+  ticketCreateLimiter,
+  requireRole(Role.REQUESTER),
+  validateBody(createTicketSchema),
+  create,
+);
 ticketRouter.get('/', validateQuery(listTicketsQuerySchema), list);
 // The agent's own queue: tickets currently assigned to the caller.
 ticketRouter.get('/queue', requireRole(Role.AGENT), validateQuery(listTicketsQuerySchema), queue);
@@ -34,12 +41,14 @@ ticketRouter.get('/dashboard', requireRole(Role.AGENT, Role.ADMIN), dashboard);
 ticketRouter.get('/:id', getById);
 ticketRouter.patch(
   '/:id/status',
+  writeLimiter,
   requireRole(Role.AGENT),
   validateBody(transitionTicketSchema),
   transitionStatus,
 );
 ticketRouter.patch(
   '/:id/assign',
+  writeLimiter,
   requireRole(Role.AGENT, Role.ADMIN),
   validateBody(assignTicketSchema),
   assign,
@@ -47,6 +56,7 @@ ticketRouter.patch(
 // Admins oversee and reassign; they do not take part in the comment thread.
 ticketRouter.post(
   '/:id/comments',
+  commentLimiter,
   requireRole(Role.REQUESTER, Role.AGENT),
   validateBody(createCommentSchema),
   addComment,
